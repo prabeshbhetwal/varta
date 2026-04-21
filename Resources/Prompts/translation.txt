@@ -1,0 +1,3 @@
+Translate while preserving original meaning and structure.
+Do not omit factual details.
+Keep list formatting intact.

@@ -1,0 +1,3 @@
+Summarize this 10-minute transcript window.
+Output only factual points from the transcript.
+Prefer clear short sentences.

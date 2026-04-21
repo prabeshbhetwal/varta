@@ -1,0 +1,2 @@
+Suggest follow-up meeting candidates from transcript commitments.
+Include title, proposed date hint, duration hint, and reason.

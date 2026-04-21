@@ -19,6 +19,36 @@
 		BF10A0000000000000000000 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = PK6010000000000000000000 /* GRDB */; };
 		BF10B0000000000000000000 /* StorageServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR2400000000000000000000 /* StorageServiceTests.swift */; };
 		BF10C0000000000000000000 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = PK6020000000000000000000 /* GRDB */; };
+		BF1100000000000000000000 /* StorageModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR2600000000000000000000 /* StorageModels.swift */; };
+		BF1110000000000000000000 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR2700000000000000000000 /* HomeView.swift */; };
+		BF1120000000000000000000 /* HomeViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR2710000000000000000000 /* HomeViewModel.swift */; };
+		BF1130000000000000000000 /* MeetingDetailViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR2800000000000000000000 /* MeetingDetailViewModel.swift */; };
+		BF1140000000000000000000 /* MeetingDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR2810000000000000000000 /* MeetingDetailView.swift */; };
+		BF1150000000000000000000 /* SummaryTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR2820000000000000000000 /* SummaryTabView.swift */; };
+		BF1160000000000000000000 /* TranscriptTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR2830000000000000000000 /* TranscriptTabView.swift */; };
+		BF1170000000000000000000 /* TranslationTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR2840000000000000000000 /* TranslationTabView.swift */; };
+		BF1180000000000000000000 /* OutputsTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR2850000000000000000000 /* OutputsTabView.swift */; };
+		BF1190000000000000000000 /* WhisperCppBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR2900000000000000000000 /* WhisperCppBridge.swift */; };
+		BF11A0000000000000000000 /* TranscriptionService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR2910000000000000000000 /* TranscriptionService.swift */; };
+		BF11B0000000000000000000 /* ImportPipelineService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR2920000000000000000000 /* ImportPipelineService.swift */; };
+		BF11C0000000000000000000 /* PromptTemplateService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR2A00000000000000000000 /* PromptTemplateService.swift */; };
+		BF11D0000000000000000000 /* SummariserService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR2A10000000000000000000 /* SummariserService.swift */; };
+		BF11E0000000000000000000 /* TranslationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR2B00000000000000000000 /* TranslationService.swift */; };
+		BF11F0000000000000000000 /* MemoryManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR2C00000000000000000000 /* MemoryManager.swift */; };
+		BF1200000000000000000000 /* window-summary.txt in Resources */ = {isa = PBXBuildFile; fileRef = FR2D00000000000000000000 /* window-summary.txt */; };
+		BF1210000000000000000000 /* section-synthesis.txt in Resources */ = {isa = PBXBuildFile; fileRef = FR2D10000000000000000000 /* section-synthesis.txt */; };
+		BF1220000000000000000000 /* final-summary.txt in Resources */ = {isa = PBXBuildFile; fileRef = FR2D20000000000000000000 /* final-summary.txt */; };
+		BF1230000000000000000000 /* action-items.txt in Resources */ = {isa = PBXBuildFile; fileRef = FR2D30000000000000000000 /* action-items.txt */; };
+		BF1240000000000000000000 /* decisions.txt in Resources */ = {isa = PBXBuildFile; fileRef = FR2D40000000000000000000 /* decisions.txt */; };
+		BF1250000000000000000000 /* unresolved-questions.txt in Resources */ = {isa = PBXBuildFile; fileRef = FR2D50000000000000000000 /* unresolved-questions.txt */; };
+		BF1260000000000000000000 /* follow-up-email.txt in Resources */ = {isa = PBXBuildFile; fileRef = FR2D60000000000000000000 /* follow-up-email.txt */; };
+		BF1270000000000000000000 /* calendar-candidates.txt in Resources */ = {isa = PBXBuildFile; fileRef = FR2D70000000000000000000 /* calendar-candidates.txt */; };
+		BF1280000000000000000000 /* translation.txt in Resources */ = {isa = PBXBuildFile; fileRef = FR2D80000000000000000000 /* translation.txt */; };
+		BF1290000000000000000000 /* model-manifest.json in Resources */ = {isa = PBXBuildFile; fileRef = FR2E00000000000000000000 /* model-manifest.json */; };
+		BF12A0000000000000000000 /* GlossaryReplacementTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3000000000000000000000 /* GlossaryReplacementTests.swift */; };
+		BF12B0000000000000000000 /* LanguageTaggingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3010000000000000000000 /* LanguageTaggingTests.swift */; };
+		BF12C0000000000000000000 /* TranscriptCorrectionLockingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3020000000000000000000 /* TranscriptCorrectionLockingTests.swift */; };
+		BF12D0000000000000000000 /* LocalImportLoopIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3030000000000000000000 /* LocalImportLoopIntegrationTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -46,6 +76,37 @@
 		FR2400000000000000000000 /* StorageServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageServiceTests.swift; sourceTree = "<group>"; };
 		FR2500000000000000000000 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		FR2510000000000000000000 /* Varta.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Varta.entitlements; sourceTree = "<group>"; };
+		FR2600000000000000000000 /* StorageModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageModels.swift; sourceTree = "<group>"; };
+		FR2700000000000000000000 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
+		FR2710000000000000000000 /* HomeViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeViewModel.swift; sourceTree = "<group>"; };
+		FR2800000000000000000000 /* MeetingDetailViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingDetailViewModel.swift; sourceTree = "<group>"; };
+		FR2810000000000000000000 /* MeetingDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MeetingDetailView.swift; sourceTree = "<group>"; };
+		FR2820000000000000000000 /* SummaryTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SummaryTabView.swift; sourceTree = "<group>"; };
+		FR2830000000000000000000 /* TranscriptTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptTabView.swift; sourceTree = "<group>"; };
+		FR2840000000000000000000 /* TranslationTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranslationTabView.swift; sourceTree = "<group>"; };
+		FR2850000000000000000000 /* OutputsTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OutputsTabView.swift; sourceTree = "<group>"; };
+		FR2900000000000000000000 /* WhisperCppBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WhisperCppBridge.swift; sourceTree = "<group>"; };
+		FR2910000000000000000000 /* TranscriptionService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptionService.swift; sourceTree = "<group>"; };
+		FR2920000000000000000000 /* ImportPipelineService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportPipelineService.swift; sourceTree = "<group>"; };
+		FR2A00000000000000000000 /* PromptTemplateService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PromptTemplateService.swift; sourceTree = "<group>"; };
+		FR2A10000000000000000000 /* SummariserService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SummariserService.swift; sourceTree = "<group>"; };
+		FR2B00000000000000000000 /* TranslationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranslationService.swift; sourceTree = "<group>"; };
+		FR2C00000000000000000000 /* MemoryManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryManager.swift; sourceTree = "<group>"; };
+		FR2D00000000000000000000 /* window-summary.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "window-summary.txt"; sourceTree = "<group>"; };
+		FR2D10000000000000000000 /* section-synthesis.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "section-synthesis.txt"; sourceTree = "<group>"; };
+		FR2D20000000000000000000 /* final-summary.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "final-summary.txt"; sourceTree = "<group>"; };
+		FR2D30000000000000000000 /* action-items.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "action-items.txt"; sourceTree = "<group>"; };
+		FR2D40000000000000000000 /* decisions.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "decisions.txt"; sourceTree = "<group>"; };
+		FR2D50000000000000000000 /* unresolved-questions.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "unresolved-questions.txt"; sourceTree = "<group>"; };
+		FR2D60000000000000000000 /* follow-up-email.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "follow-up-email.txt"; sourceTree = "<group>"; };
+		FR2D70000000000000000000 /* calendar-candidates.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "calendar-candidates.txt"; sourceTree = "<group>"; };
+		FR2D80000000000000000000 /* translation.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = "translation.txt"; sourceTree = "<group>"; };
+		FR2E00000000000000000000 /* model-manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "model-manifest.json"; sourceTree = "<group>"; };
+		FR2F00000000000000000000 /* whisper-cpp.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = "whisper-cpp.xcframework"; sourceTree = "<group>"; };
+		FR3000000000000000000000 /* GlossaryReplacementTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlossaryReplacementTests.swift; sourceTree = "<group>"; };
+		FR3010000000000000000000 /* LanguageTaggingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LanguageTaggingTests.swift; sourceTree = "<group>"; };
+		FR3020000000000000000000 /* TranscriptCorrectionLockingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptCorrectionLockingTests.swift; sourceTree = "<group>"; };
+		FR3030000000000000000000 /* LocalImportLoopIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalImportLoopIntegrationTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -75,6 +136,9 @@
 				GR3030000000000000000000 /* Features */,
 				GR3050000000000000000000 /* Services */,
 				GR3070000000000000000000 /* Tests */,
+				GR30A0000000000000000000 /* Resources */,
+				GR30B0000000000000000000 /* Models */,
+				GR30C0000000000000000000 /* Native */,
 				GR3080000000000000000000 /* Varta */,
 				GR3010000000000000000000 /* Products */,
 			);
@@ -103,6 +167,8 @@
 		GR3030000000000000000000 /* Features */ = {
 			isa = PBXGroup;
 			children = (
+				GR30D0000000000000000000 /* Home */,
+				GR30E0000000000000000000 /* MeetingDetail */,
 				GR3040000000000000000000 /* Settings */,
 			);
 			path = Features;
@@ -121,6 +187,10 @@
 			isa = PBXGroup;
 			children = (
 				GR3060000000000000000000 /* Storage */,
+				GR3130000000000000000000 /* Transcription */,
+				GR3140000000000000000000 /* Summarisation */,
+				GR3150000000000000000000 /* Translation */,
+				GR3160000000000000000000 /* Memory */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -131,6 +201,7 @@
 				FR2300000000000000000000 /* StorageService.swift */,
 				FR2310000000000000000000 /* Migrations.swift */,
 				FR2320000000000000000000 /* SettingsStore.swift */,
+				FR2600000000000000000000 /* StorageModels.swift */,
 			);
 			path = Storage;
 			sourceTree = "<group>";
@@ -139,6 +210,10 @@
 			isa = PBXGroup;
 			children = (
 				FR2400000000000000000000 /* StorageServiceTests.swift */,
+				FR3000000000000000000000 /* GlossaryReplacementTests.swift */,
+				FR3010000000000000000000 /* LanguageTaggingTests.swift */,
+				FR3020000000000000000000 /* TranscriptCorrectionLockingTests.swift */,
+				FR3030000000000000000000 /* LocalImportLoopIntegrationTests.swift */,
 			);
 			path = Tests/VartaTests;
 			sourceTree = "<group>";
@@ -158,6 +233,135 @@
 				FR2510000000000000000000 /* Varta.entitlements */,
 			);
 			path = Resources;
+			sourceTree = "<group>";
+		};
+		GR30A0000000000000000000 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				GR3170000000000000000000 /* Prompts */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		GR30B0000000000000000000 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				FR2E00000000000000000000 /* model-manifest.json */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		GR30C0000000000000000000 /* Native */ = {
+			isa = PBXGroup;
+			children = (
+				FR2F00000000000000000000 /* whisper-cpp.xcframework */,
+			);
+			path = Native;
+			sourceTree = "<group>";
+		};
+		GR30D0000000000000000000 /* Home */ = {
+			isa = PBXGroup;
+			children = (
+				FR2700000000000000000000 /* HomeView.swift */,
+				FR2710000000000000000000 /* HomeViewModel.swift */,
+			);
+			path = Home;
+			sourceTree = "<group>";
+		};
+		GR30E0000000000000000000 /* MeetingDetail */ = {
+			isa = PBXGroup;
+			children = (
+				GR30F0000000000000000000 /* Summary */,
+				GR3100000000000000000000 /* Transcript */,
+				GR3110000000000000000000 /* Translation */,
+				GR3120000000000000000000 /* Outputs */,
+			);
+			path = MeetingDetail;
+			sourceTree = "<group>";
+		};
+		GR30F0000000000000000000 /* Summary */ = {
+			isa = PBXGroup;
+			children = (
+				FR2800000000000000000000 /* MeetingDetailViewModel.swift */,
+				FR2810000000000000000000 /* MeetingDetailView.swift */,
+				FR2820000000000000000000 /* SummaryTabView.swift */,
+			);
+			path = Summary;
+			sourceTree = "<group>";
+		};
+		GR3100000000000000000000 /* Transcript */ = {
+			isa = PBXGroup;
+			children = (
+				FR2830000000000000000000 /* TranscriptTabView.swift */,
+			);
+			path = Transcript;
+			sourceTree = "<group>";
+		};
+		GR3110000000000000000000 /* Translation */ = {
+			isa = PBXGroup;
+			children = (
+				FR2840000000000000000000 /* TranslationTabView.swift */,
+			);
+			path = Translation;
+			sourceTree = "<group>";
+		};
+		GR3120000000000000000000 /* Outputs */ = {
+			isa = PBXGroup;
+			children = (
+				FR2850000000000000000000 /* OutputsTabView.swift */,
+			);
+			path = Outputs;
+			sourceTree = "<group>";
+		};
+		GR3130000000000000000000 /* Transcription */ = {
+			isa = PBXGroup;
+			children = (
+				FR2900000000000000000000 /* WhisperCppBridge.swift */,
+				FR2910000000000000000000 /* TranscriptionService.swift */,
+				FR2920000000000000000000 /* ImportPipelineService.swift */,
+			);
+			path = Transcription;
+			sourceTree = "<group>";
+		};
+		GR3140000000000000000000 /* Summarisation */ = {
+			isa = PBXGroup;
+			children = (
+				FR2A00000000000000000000 /* PromptTemplateService.swift */,
+				FR2A10000000000000000000 /* SummariserService.swift */,
+			);
+			path = Summarisation;
+			sourceTree = "<group>";
+		};
+		GR3150000000000000000000 /* Translation */ = {
+			isa = PBXGroup;
+			children = (
+				FR2B00000000000000000000 /* TranslationService.swift */,
+			);
+			path = Translation;
+			sourceTree = "<group>";
+		};
+		GR3160000000000000000000 /* Memory */ = {
+			isa = PBXGroup;
+			children = (
+				FR2C00000000000000000000 /* MemoryManager.swift */,
+			);
+			path = Memory;
+			sourceTree = "<group>";
+		};
+		GR3170000000000000000000 /* Prompts */ = {
+			isa = PBXGroup;
+			children = (
+				FR2D00000000000000000000 /* window-summary.txt */,
+				FR2D10000000000000000000 /* section-synthesis.txt */,
+				FR2D20000000000000000000 /* final-summary.txt */,
+				FR2D30000000000000000000 /* action-items.txt */,
+				FR2D40000000000000000000 /* decisions.txt */,
+				FR2D50000000000000000000 /* unresolved-questions.txt */,
+				FR2D60000000000000000000 /* follow-up-email.txt */,
+				FR2D70000000000000000000 /* calendar-candidates.txt */,
+				FR2D80000000000000000000 /* translation.txt */,
+			);
+			path = Prompts;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -250,6 +454,16 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BF1200000000000000000000 /* window-summary.txt in Resources */,
+				BF1210000000000000000000 /* section-synthesis.txt in Resources */,
+				BF1220000000000000000000 /* final-summary.txt in Resources */,
+				BF1230000000000000000000 /* action-items.txt in Resources */,
+				BF1240000000000000000000 /* decisions.txt in Resources */,
+				BF1250000000000000000000 /* unresolved-questions.txt in Resources */,
+				BF1260000000000000000000 /* follow-up-email.txt in Resources */,
+				BF1270000000000000000000 /* calendar-candidates.txt in Resources */,
+				BF1280000000000000000000 /* translation.txt in Resources */,
+				BF1290000000000000000000 /* model-manifest.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -276,6 +490,22 @@
 				BF1070000000000000000000 /* StorageService.swift in Sources */,
 				BF1080000000000000000000 /* Migrations.swift in Sources */,
 				BF1090000000000000000000 /* SettingsStore.swift in Sources */,
+				BF1100000000000000000000 /* StorageModels.swift in Sources */,
+				BF1110000000000000000000 /* HomeView.swift in Sources */,
+				BF1120000000000000000000 /* HomeViewModel.swift in Sources */,
+				BF1130000000000000000000 /* MeetingDetailViewModel.swift in Sources */,
+				BF1140000000000000000000 /* MeetingDetailView.swift in Sources */,
+				BF1150000000000000000000 /* SummaryTabView.swift in Sources */,
+				BF1160000000000000000000 /* TranscriptTabView.swift in Sources */,
+				BF1170000000000000000000 /* TranslationTabView.swift in Sources */,
+				BF1180000000000000000000 /* OutputsTabView.swift in Sources */,
+				BF1190000000000000000000 /* WhisperCppBridge.swift in Sources */,
+				BF11A0000000000000000000 /* TranscriptionService.swift in Sources */,
+				BF11B0000000000000000000 /* ImportPipelineService.swift in Sources */,
+				BF11C0000000000000000000 /* PromptTemplateService.swift in Sources */,
+				BF11D0000000000000000000 /* SummariserService.swift in Sources */,
+				BF11E0000000000000000000 /* TranslationService.swift in Sources */,
+				BF11F0000000000000000000 /* MemoryManager.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -284,6 +514,10 @@
 			buildActionMask = 2147483647;
 			files = (
 				BF10B0000000000000000000 /* StorageServiceTests.swift in Sources */,
+				BF12A0000000000000000000 /* GlossaryReplacementTests.swift in Sources */,
+				BF12B0000000000000000000 /* LanguageTaggingTests.swift in Sources */,
+				BF12C0000000000000000000 /* TranscriptCorrectionLockingTests.swift in Sources */,
+				BF12D0000000000000000000 /* LocalImportLoopIntegrationTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

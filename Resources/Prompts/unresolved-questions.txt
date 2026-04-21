@@ -1,0 +1,2 @@
+List unresolved questions from the transcript.
+Prefer concise wording and include likely owner when identifiable.

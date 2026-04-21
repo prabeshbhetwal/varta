@@ -21,7 +21,7 @@ struct RootView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .ready:
             if appModel.hasCompletedOnboarding {
-                SettingsShellView()
+                HomeView()
             } else {
                 OnboardingView()
             }

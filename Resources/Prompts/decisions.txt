@@ -1,0 +1,2 @@
+Extract explicit decisions made in the meeting.
+Include supporting rationale when present.

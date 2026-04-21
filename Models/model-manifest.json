@@ -1,0 +1,18 @@
+{
+  "whisper": {
+    "engine": "whisper.cpp",
+    "backend": "metal",
+    "model": "ggml-large-v3-q5_0",
+    "path": "Models/whisper/ggml-large-v3-q5_0.bin"
+  },
+  "summariser": {
+    "engine": "mlx-swift",
+    "model": "llama-3.1-8b-instruct-4bit",
+    "path": "Models/llm/llama-3.1-8b-instruct-4bit"
+  },
+  "translation": {
+    "engine": "mlx-swift",
+    "mode": "prompt-path",
+    "supports": ["en", "ne"]
+  }
+}

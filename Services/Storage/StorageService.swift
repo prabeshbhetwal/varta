@@ -492,6 +492,232 @@ actor StorageService {
         }
     }
 
+    func createJob(meetingID: String?, type: JobType, status: JobStatus) throws -> String {
+        let jobID = UUID().uuidString.lowercased()
+        try dbQueue.write { db in
+            try db.execute(
+                sql: """
+                INSERT INTO jobs (
+                    id,
+                    meeting_id,
+                    job_type,
+                    status,
+                    progress,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """,
+                arguments: [jobID, meetingID, type.rawValue, status.rawValue]
+            )
+        }
+
+        return jobID
+    }
+
+    func upsertJob(
+        id: String,
+        meetingID: String?,
+        type: JobType,
+        status: JobStatus,
+        progress: Double,
+        errorMessage: String?
+    ) throws {
+        try dbQueue.write { db in
+            try db.execute(
+                sql: """
+                INSERT INTO jobs (
+                    id,
+                    meeting_id,
+                    job_type,
+                    status,
+                    progress,
+                    error_message,
+                    created_at,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT(id) DO UPDATE SET
+                    meeting_id = excluded.meeting_id,
+                    job_type = excluded.job_type,
+                    status = excluded.status,
+                    progress = excluded.progress,
+                    error_message = excluded.error_message,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                arguments: [id, meetingID, type.rawValue, status.rawValue, progress, errorMessage]
+            )
+        }
+    }
+
+    func updateJobStatus(
+        id: String,
+        status: JobStatus,
+        progress: Double? = nil,
+        errorMessage: String? = nil
+    ) throws {
+        try dbQueue.write { db in
+            if let progress {
+                try db.execute(
+                    sql: """
+                    UPDATE jobs
+                    SET status = ?, progress = ?, error_message = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    arguments: [status.rawValue, progress, errorMessage, id]
+                )
+            } else {
+                try db.execute(
+                    sql: """
+                    UPDATE jobs
+                    SET status = ?, error_message = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                    """,
+                    arguments: [status.rawValue, errorMessage, id]
+                )
+            }
+        }
+    }
+
+    func job(id: String) throws -> JobRecord? {
+        try dbQueue.read { db in
+            guard let row = try Row.fetchOne(
+                db,
+                sql: """
+                SELECT
+                    id,
+                    meeting_id,
+                    job_type,
+                    status,
+                    progress,
+                    error_message,
+                    CAST(strftime('%s', created_at) AS REAL) AS created_at_ts,
+                    CAST(strftime('%s', updated_at) AS REAL) AS updated_at_ts
+                FROM jobs
+                WHERE id = ?
+                """,
+                arguments: [id]
+            ) else {
+                return nil
+            }
+
+            return Self.decodeJobRecord(from: row)
+        }
+    }
+
+    func jobs(statuses: [JobStatus]? = nil, type: JobType? = nil) throws -> [JobRecord] {
+        try dbQueue.read { db in
+            var sql = """
+            SELECT
+                id,
+                meeting_id,
+                job_type,
+                status,
+                progress,
+                error_message,
+                CAST(strftime('%s', created_at) AS REAL) AS created_at_ts,
+                CAST(strftime('%s', updated_at) AS REAL) AS updated_at_ts
+            FROM jobs
+            """
+            var clauses: [String] = []
+            var arguments = StatementArguments()
+
+            if let statuses, !statuses.isEmpty {
+                let placeholders = statuses.map { _ in "?" }.joined(separator: ",")
+                clauses.append("status IN (\(placeholders))")
+                for status in statuses {
+                    arguments += [status.rawValue]
+                }
+            }
+
+            if let type {
+                clauses.append("job_type = ?")
+                arguments += [type.rawValue]
+            }
+
+            if !clauses.isEmpty {
+                sql += " WHERE " + clauses.joined(separator: " AND ")
+            }
+
+            sql += " ORDER BY updated_at DESC"
+
+            let rows = try Row.fetchAll(db, sql: sql, arguments: arguments)
+            return rows.compactMap(Self.decodeJobRecord(from:))
+        }
+    }
+
+    func upsertProcessingState(
+        jobID: String,
+        stage: String,
+        checkpointBlob: String?,
+        checkpointOffsetSeconds: Double?
+    ) throws {
+        try dbQueue.write { db in
+            try db.execute(
+                sql: """
+                INSERT INTO processing_state (
+                    job_id,
+                    stage,
+                    checkpoint_blob,
+                    checkpoint_offset_seconds,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(job_id, stage) DO UPDATE SET
+                    checkpoint_blob = excluded.checkpoint_blob,
+                    checkpoint_offset_seconds = excluded.checkpoint_offset_seconds,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                arguments: [jobID, stage, checkpointBlob, checkpointOffsetSeconds]
+            )
+        }
+    }
+
+    func processingState(jobID: String, stage: String) throws -> ProcessingCheckpoint? {
+        try dbQueue.read { db in
+            guard let row = try Row.fetchOne(
+                db,
+                sql: """
+                SELECT
+                    job_id,
+                    stage,
+                    checkpoint_blob,
+                    checkpoint_offset_seconds,
+                    CAST(strftime('%s', updated_at) AS REAL) AS updated_at_ts
+                FROM processing_state
+                WHERE job_id = ? AND stage = ?
+                """,
+                arguments: [jobID, stage]
+            ) else {
+                return nil
+            }
+
+            return Self.decodeCheckpoint(from: row)
+        }
+    }
+
+    func processingStates(jobID: String) throws -> [ProcessingCheckpoint] {
+        try dbQueue.read { db in
+            let rows = try Row.fetchAll(
+                db,
+                sql: """
+                SELECT
+                    job_id,
+                    stage,
+                    checkpoint_blob,
+                    checkpoint_offset_seconds,
+                    CAST(strftime('%s', updated_at) AS REAL) AS updated_at_ts
+                FROM processing_state
+                WHERE job_id = ?
+                ORDER BY updated_at DESC
+                """,
+                arguments: [jobID]
+            )
+
+            return rows.compactMap(Self.decodeCheckpoint(from:))
+        }
+    }
+
     func resolvedImportedMediaURL(relativePath: String) -> URL {
         appSupportDirectoryURL.appendingPathComponent(relativePath)
     }
@@ -527,5 +753,35 @@ actor StorageService {
         )
 
         return appSupportRoot.appendingPathComponent("Varta", isDirectory: true)
+    }
+
+    private static func decodeJobRecord(from row: Row) -> JobRecord? {
+        guard
+            let jobType = JobType(rawValue: row["job_type"] ?? ""),
+            let status = JobStatus(rawValue: row["status"] ?? "")
+        else {
+            return nil
+        }
+
+        return JobRecord(
+            id: row["id"],
+            meetingID: row["meeting_id"],
+            jobType: jobType,
+            status: status,
+            progress: row["progress"] ?? 0,
+            errorMessage: row["error_message"],
+            createdAt: Date(timeIntervalSince1970: row["created_at_ts"] ?? 0),
+            updatedAt: Date(timeIntervalSince1970: row["updated_at_ts"] ?? 0)
+        )
+    }
+
+    private static func decodeCheckpoint(from row: Row) -> ProcessingCheckpoint {
+        ProcessingCheckpoint(
+            jobID: row["job_id"],
+            stage: row["stage"],
+            checkpointBlob: row["checkpoint_blob"],
+            checkpointOffsetSeconds: row["checkpoint_offset_seconds"],
+            updatedAt: Date(timeIntervalSince1970: row["updated_at_ts"] ?? 0)
+        )
     }
 }

@@ -6,6 +6,7 @@ struct HomeView: View {
 
     @StateObject private var viewModelHolder = HomeViewModelHolder()
     @State private var showingImporter = false
+    @State private var showingRecordingControls = false
 
     private let supportedTypes: [UTType] = ["mp3", "m4a", "wav", "aiff", "mp4", "mov", "m4v"]
         .compactMap { UTType(filenameExtension: $0) }
@@ -41,6 +42,16 @@ struct HomeView: View {
                     }
                 }
                 .toolbar {
+                    ToolbarItem(placement: .automatic) {
+                        if appModel.recorderCoordinator != nil {
+                            Button {
+                                showingRecordingControls = true
+                            } label: {
+                                Label("Recording", systemImage: "mic.circle")
+                            }
+                        }
+                    }
+
                     ToolbarItem(placement: .primaryAction) {
                         Button {
                             showingImporter = true
@@ -77,6 +88,14 @@ struct HomeView: View {
                     Button("OK", role: .cancel) { }
                 } message: {
                     Text(viewModel.errorMessage ?? "Unknown import error")
+                }
+                .sheet(isPresented: $showingRecordingControls) {
+                    if let recorderCoordinator = appModel.recorderCoordinator {
+                        RecordingControlsView(recorderCoordinator: recorderCoordinator)
+                    } else {
+                        Text("Recording services are unavailable.")
+                            .padding(20)
+                    }
                 }
             } else {
                 ProgressView("Preparing storage")

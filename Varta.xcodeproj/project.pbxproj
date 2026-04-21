@@ -49,6 +49,21 @@
 		BF12B0000000000000000000 /* LanguageTaggingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3010000000000000000000 /* LanguageTaggingTests.swift */; };
 		BF12C0000000000000000000 /* TranscriptCorrectionLockingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3020000000000000000000 /* TranscriptCorrectionLockingTests.swift */; };
 		BF12D0000000000000000000 /* LocalImportLoopIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3030000000000000000000 /* LocalImportLoopIntegrationTests.swift */; };
+		BF1300000000000000000000 /* RecorderModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3200000000000000000000 /* RecorderModels.swift */; };
+		BF1310000000000000000000 /* RecordingWriter.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3210000000000000000000 /* RecordingWriter.swift */; };
+		BF1320000000000000000000 /* MicrophoneCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3220000000000000000000 /* MicrophoneCapture.swift */; };
+		BF1330000000000000000000 /* SystemAudioCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3230000000000000000000 /* SystemAudioCapture.swift */; };
+		BF1340000000000000000000 /* RecorderCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3240000000000000000000 /* RecorderCoordinator.swift */; };
+		BF1350000000000000000000 /* RecordingCheckpoint.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3300000000000000000000 /* RecordingCheckpoint.swift */; };
+		BF1360000000000000000000 /* JobQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3310000000000000000000 /* JobQueue.swift */; };
+		BF1370000000000000000000 /* Checkpointer.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3320000000000000000000 /* Checkpointer.swift */; };
+		BF1380000000000000000000 /* SystemEventMonitors.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3400000000000000000000 /* SystemEventMonitors.swift */; };
+		BF1390000000000000000000 /* SystemRuntimeCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3410000000000000000000 /* SystemRuntimeCoordinator.swift */; };
+		BF13A0000000000000000000 /* RecordingControlsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3500000000000000000000 /* RecordingControlsView.swift */; };
+		BF13B0000000000000000000 /* RecordingControlsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3510000000000000000000 /* RecordingControlsViewModel.swift */; };
+		BF13C0000000000000000000 /* CheckpointerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3600000000000000000000 /* CheckpointerTests.swift */; };
+		BF13D0000000000000000000 /* MemoryManagerLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3610000000000000000000 /* MemoryManagerLifecycleTests.swift */; };
+		BF13E0000000000000000000 /* RecordingCrashRecoveryIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3620000000000000000000 /* RecordingCrashRecoveryIntegrationTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -107,6 +122,21 @@
 		FR3010000000000000000000 /* LanguageTaggingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LanguageTaggingTests.swift; sourceTree = "<group>"; };
 		FR3020000000000000000000 /* TranscriptCorrectionLockingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptCorrectionLockingTests.swift; sourceTree = "<group>"; };
 		FR3030000000000000000000 /* LocalImportLoopIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalImportLoopIntegrationTests.swift; sourceTree = "<group>"; };
+		FR3200000000000000000000 /* RecorderModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecorderModels.swift; sourceTree = "<group>"; };
+		FR3210000000000000000000 /* RecordingWriter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingWriter.swift; sourceTree = "<group>"; };
+		FR3220000000000000000000 /* MicrophoneCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MicrophoneCapture.swift; sourceTree = "<group>"; };
+		FR3230000000000000000000 /* SystemAudioCapture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemAudioCapture.swift; sourceTree = "<group>"; };
+		FR3240000000000000000000 /* RecorderCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecorderCoordinator.swift; sourceTree = "<group>"; };
+		FR3300000000000000000000 /* RecordingCheckpoint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingCheckpoint.swift; sourceTree = "<group>"; };
+		FR3310000000000000000000 /* JobQueue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JobQueue.swift; sourceTree = "<group>"; };
+		FR3320000000000000000000 /* Checkpointer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Checkpointer.swift; sourceTree = "<group>"; };
+		FR3400000000000000000000 /* SystemEventMonitors.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemEventMonitors.swift; sourceTree = "<group>"; };
+		FR3410000000000000000000 /* SystemRuntimeCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemRuntimeCoordinator.swift; sourceTree = "<group>"; };
+		FR3500000000000000000000 /* RecordingControlsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingControlsView.swift; sourceTree = "<group>"; };
+		FR3510000000000000000000 /* RecordingControlsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingControlsViewModel.swift; sourceTree = "<group>"; };
+		FR3600000000000000000000 /* CheckpointerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CheckpointerTests.swift; sourceTree = "<group>"; };
+		FR3610000000000000000000 /* MemoryManagerLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryManagerLifecycleTests.swift; sourceTree = "<group>"; };
+		FR3620000000000000000000 /* RecordingCrashRecoveryIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingCrashRecoveryIntegrationTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -168,6 +198,7 @@
 			isa = PBXGroup;
 			children = (
 				GR30D0000000000000000000 /* Home */,
+				GR3180000000000000000000 /* Recording */,
 				GR30E0000000000000000000 /* MeetingDetail */,
 				GR3040000000000000000000 /* Settings */,
 			);
@@ -186,6 +217,9 @@
 		GR3050000000000000000000 /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				GR3190000000000000000000 /* Recording */,
+				GR31A0000000000000000000 /* Jobs */,
+				GR31B0000000000000000000 /* System */,
 				GR3060000000000000000000 /* Storage */,
 				GR3130000000000000000000 /* Transcription */,
 				GR3140000000000000000000 /* Summarisation */,
@@ -214,6 +248,9 @@
 				FR3010000000000000000000 /* LanguageTaggingTests.swift */,
 				FR3020000000000000000000 /* TranscriptCorrectionLockingTests.swift */,
 				FR3030000000000000000000 /* LocalImportLoopIntegrationTests.swift */,
+				FR3600000000000000000000 /* CheckpointerTests.swift */,
+				FR3610000000000000000000 /* MemoryManagerLifecycleTests.swift */,
+				FR3620000000000000000000 /* RecordingCrashRecoveryIntegrationTests.swift */,
 			);
 			path = Tests/VartaTests;
 			sourceTree = "<group>";
@@ -364,6 +401,46 @@
 			path = Prompts;
 			sourceTree = "<group>";
 		};
+		GR3180000000000000000000 /* Recording */ = {
+			isa = PBXGroup;
+			children = (
+				FR3500000000000000000000 /* RecordingControlsView.swift */,
+				FR3510000000000000000000 /* RecordingControlsViewModel.swift */,
+			);
+			path = Recording;
+			sourceTree = "<group>";
+		};
+		GR3190000000000000000000 /* Recording */ = {
+			isa = PBXGroup;
+			children = (
+				FR3200000000000000000000 /* RecorderModels.swift */,
+				FR3210000000000000000000 /* RecordingWriter.swift */,
+				FR3220000000000000000000 /* MicrophoneCapture.swift */,
+				FR3230000000000000000000 /* SystemAudioCapture.swift */,
+				FR3240000000000000000000 /* RecorderCoordinator.swift */,
+			);
+			path = Recording;
+			sourceTree = "<group>";
+		};
+		GR31A0000000000000000000 /* Jobs */ = {
+			isa = PBXGroup;
+			children = (
+				FR3300000000000000000000 /* RecordingCheckpoint.swift */,
+				FR3310000000000000000000 /* JobQueue.swift */,
+				FR3320000000000000000000 /* Checkpointer.swift */,
+			);
+			path = Jobs;
+			sourceTree = "<group>";
+		};
+		GR31B0000000000000000000 /* System */ = {
+			isa = PBXGroup;
+			children = (
+				FR3400000000000000000000 /* SystemEventMonitors.swift */,
+				FR3410000000000000000000 /* SystemRuntimeCoordinator.swift */,
+			);
+			path = System;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -493,6 +570,8 @@
 				BF1100000000000000000000 /* StorageModels.swift in Sources */,
 				BF1110000000000000000000 /* HomeView.swift in Sources */,
 				BF1120000000000000000000 /* HomeViewModel.swift in Sources */,
+				BF13A0000000000000000000 /* RecordingControlsView.swift in Sources */,
+				BF13B0000000000000000000 /* RecordingControlsViewModel.swift in Sources */,
 				BF1130000000000000000000 /* MeetingDetailViewModel.swift in Sources */,
 				BF1140000000000000000000 /* MeetingDetailView.swift in Sources */,
 				BF1150000000000000000000 /* SummaryTabView.swift in Sources */,
@@ -506,6 +585,16 @@
 				BF11D0000000000000000000 /* SummariserService.swift in Sources */,
 				BF11E0000000000000000000 /* TranslationService.swift in Sources */,
 				BF11F0000000000000000000 /* MemoryManager.swift in Sources */,
+				BF1300000000000000000000 /* RecorderModels.swift in Sources */,
+				BF1310000000000000000000 /* RecordingWriter.swift in Sources */,
+				BF1320000000000000000000 /* MicrophoneCapture.swift in Sources */,
+				BF1330000000000000000000 /* SystemAudioCapture.swift in Sources */,
+				BF1340000000000000000000 /* RecorderCoordinator.swift in Sources */,
+				BF1350000000000000000000 /* RecordingCheckpoint.swift in Sources */,
+				BF1360000000000000000000 /* JobQueue.swift in Sources */,
+				BF1370000000000000000000 /* Checkpointer.swift in Sources */,
+				BF1380000000000000000000 /* SystemEventMonitors.swift in Sources */,
+				BF1390000000000000000000 /* SystemRuntimeCoordinator.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -518,6 +607,9 @@
 				BF12B0000000000000000000 /* LanguageTaggingTests.swift in Sources */,
 				BF12C0000000000000000000 /* TranscriptCorrectionLockingTests.swift in Sources */,
 				BF12D0000000000000000000 /* LocalImportLoopIntegrationTests.swift in Sources */,
+				BF13C0000000000000000000 /* CheckpointerTests.swift in Sources */,
+				BF13D0000000000000000000 /* MemoryManagerLifecycleTests.swift in Sources */,
+				BF13E0000000000000000000 /* RecordingCrashRecoveryIntegrationTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

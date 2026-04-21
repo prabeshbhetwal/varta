@@ -90,3 +90,37 @@ struct MeetingOutputs: Sendable {
     let summary: SummaryContent
     let outputs: [GeneratedOutput]
 }
+
+enum JobType: String, CaseIterable, Codable, Sendable {
+    case recording = "recording"
+    case transcription = "transcription"
+    case summarisation = "summarisation"
+    case translation = "translation"
+}
+
+enum JobStatus: String, CaseIterable, Codable, Sendable {
+    case queued = "queued"
+    case running = "running"
+    case paused = "paused"
+    case completed = "completed"
+    case failed = "failed"
+}
+
+struct JobRecord: Identifiable, Sendable {
+    let id: String
+    let meetingID: String?
+    let jobType: JobType
+    let status: JobStatus
+    let progress: Double
+    let errorMessage: String?
+    let createdAt: Date
+    let updatedAt: Date
+}
+
+struct ProcessingCheckpoint: Sendable {
+    let jobID: String
+    let stage: String
+    let checkpointBlob: String?
+    let checkpointOffsetSeconds: Double?
+    let updatedAt: Date
+}

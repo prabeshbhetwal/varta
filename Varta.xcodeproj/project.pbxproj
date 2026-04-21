@@ -1,0 +1,500 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		BF1010000000000000000000 /* VartaApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR2100000000000000000000 /* VartaApp.swift */; };
+		BF1020000000000000000000 /* AppModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR2110000000000000000000 /* AppModel.swift */; };
+		BF1030000000000000000000 /* PermissionsService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR2120000000000000000000 /* PermissionsService.swift */; };
+		BF1040000000000000000000 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR2130000000000000000000 /* RootView.swift */; };
+		BF1050000000000000000000 /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR2200000000000000000000 /* OnboardingView.swift */; };
+		BF1060000000000000000000 /* SettingsShellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR2210000000000000000000 /* SettingsShellView.swift */; };
+		BF1070000000000000000000 /* StorageService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR2300000000000000000000 /* StorageService.swift */; };
+		BF1080000000000000000000 /* Migrations.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR2310000000000000000000 /* Migrations.swift */; };
+		BF1090000000000000000000 /* SettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR2320000000000000000000 /* SettingsStore.swift */; };
+		BF10A0000000000000000000 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = PK6010000000000000000000 /* GRDB */; };
+		BF10B0000000000000000000 /* StorageServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR2400000000000000000000 /* StorageServiceTests.swift */; };
+		BF10C0000000000000000000 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = PK6020000000000000000000 /* GRDB */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		CP8000000000000000000000 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = PRJ0000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = TG5000000000000000000000;
+			remoteInfo = Varta;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		FR2000000000000000000000 /* Varta.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Varta.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		FR2010000000000000000000 /* VartaTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = VartaTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		FR2100000000000000000000 /* VartaApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VartaApp.swift; sourceTree = "<group>"; };
+		FR2110000000000000000000 /* AppModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppModel.swift; sourceTree = "<group>"; };
+		FR2120000000000000000000 /* PermissionsService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PermissionsService.swift; sourceTree = "<group>"; };
+		FR2130000000000000000000 /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		FR2200000000000000000000 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
+		FR2210000000000000000000 /* SettingsShellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsShellView.swift; sourceTree = "<group>"; };
+		FR2300000000000000000000 /* StorageService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageService.swift; sourceTree = "<group>"; };
+		FR2310000000000000000000 /* Migrations.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Migrations.swift; sourceTree = "<group>"; };
+		FR2320000000000000000000 /* SettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsStore.swift; sourceTree = "<group>"; };
+		FR2400000000000000000000 /* StorageServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageServiceTests.swift; sourceTree = "<group>"; };
+		FR2500000000000000000000 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		FR2510000000000000000000 /* Varta.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Varta.entitlements; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		BP4000000000000000000000 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BF10A0000000000000000000 /* GRDB in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BP4030000000000000000000 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BF10C0000000000000000000 /* GRDB in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		GR3000000000000000000000 = {
+			isa = PBXGroup;
+			children = (
+				GR3020000000000000000000 /* App */,
+				GR3030000000000000000000 /* Features */,
+				GR3050000000000000000000 /* Services */,
+				GR3070000000000000000000 /* Tests */,
+				GR3080000000000000000000 /* Varta */,
+				GR3010000000000000000000 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		GR3010000000000000000000 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				FR2000000000000000000000 /* Varta.app */,
+				FR2010000000000000000000 /* VartaTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		GR3020000000000000000000 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				FR2100000000000000000000 /* VartaApp.swift */,
+				FR2110000000000000000000 /* AppModel.swift */,
+				FR2120000000000000000000 /* PermissionsService.swift */,
+				FR2130000000000000000000 /* RootView.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		GR3030000000000000000000 /* Features */ = {
+			isa = PBXGroup;
+			children = (
+				GR3040000000000000000000 /* Settings */,
+			);
+			path = Features;
+			sourceTree = "<group>";
+		};
+		GR3040000000000000000000 /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				FR2200000000000000000000 /* OnboardingView.swift */,
+				FR2210000000000000000000 /* SettingsShellView.swift */,
+			);
+			path = Settings;
+			sourceTree = "<group>";
+		};
+		GR3050000000000000000000 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				GR3060000000000000000000 /* Storage */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		GR3060000000000000000000 /* Storage */ = {
+			isa = PBXGroup;
+			children = (
+				FR2300000000000000000000 /* StorageService.swift */,
+				FR2310000000000000000000 /* Migrations.swift */,
+				FR2320000000000000000000 /* SettingsStore.swift */,
+			);
+			path = Storage;
+			sourceTree = "<group>";
+		};
+		GR3070000000000000000000 /* Tests */ = {
+			isa = PBXGroup;
+			children = (
+				FR2400000000000000000000 /* StorageServiceTests.swift */,
+			);
+			path = Tests/VartaTests;
+			sourceTree = "<group>";
+		};
+		GR3080000000000000000000 /* Varta */ = {
+			isa = PBXGroup;
+			children = (
+				GR3090000000000000000000 /* Resources */,
+			);
+			path = Varta;
+			sourceTree = "<group>";
+		};
+		GR3090000000000000000000 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				FR2500000000000000000000 /* Info.plist */,
+				FR2510000000000000000000 /* Varta.entitlements */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		TG5000000000000000000000 /* Varta */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CL7010000000000000000000 /* Build configuration list for PBXNativeTarget "Varta" */;
+			buildPhases = (
+				BP4000000000000000000000 /* Frameworks */,
+				BP4010000000000000000000 /* Sources */,
+				BP4020000000000000000000 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Varta;
+			packageProductDependencies = (
+				PK6010000000000000000000 /* GRDB */,
+			);
+			productName = Varta;
+			productReference = FR2000000000000000000000 /* Varta.app */;
+			productType = "com.apple.product-type.application";
+		};
+		TG5010000000000000000000 /* VartaTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = CL7020000000000000000000 /* Build configuration list for PBXNativeTarget "VartaTests" */;
+			buildPhases = (
+				BP4030000000000000000000 /* Frameworks */,
+				BP4040000000000000000000 /* Sources */,
+				BP4050000000000000000000 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				TD8010000000000000000000 /* PBXTargetDependency */,
+			);
+			name = VartaTests;
+			packageProductDependencies = (
+				PK6020000000000000000000 /* GRDB */,
+			);
+			productName = VartaTests;
+			productReference = FR2010000000000000000000 /* VartaTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		PRJ0000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1640;
+				LastUpgradeCheck = 1640;
+				TargetAttributes = {
+					TG5000000000000000000000 = {
+						CreatedOnToolsVersion = 16.4;
+					};
+					TG5010000000000000000000 = {
+						CreatedOnToolsVersion = 16.4;
+						TestTargetID = TG5000000000000000000000;
+					};
+				};
+			};
+			buildConfigurationList = CL7000000000000000000000 /* Build configuration list for PBXProject "Varta" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = GR3000000000000000000000;
+			packageReferences = (
+				PK6000000000000000000000 /* XCRemoteSwiftPackageReference "GRDB.swift" */,
+			);
+			productRefGroup = GR3010000000000000000000 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				TG5000000000000000000000 /* Varta */,
+				TG5010000000000000000000 /* VartaTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		BP4020000000000000000000 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BP4050000000000000000000 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		BP4010000000000000000000 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BF1010000000000000000000 /* VartaApp.swift in Sources */,
+				BF1020000000000000000000 /* AppModel.swift in Sources */,
+				BF1030000000000000000000 /* PermissionsService.swift in Sources */,
+				BF1040000000000000000000 /* RootView.swift in Sources */,
+				BF1050000000000000000000 /* OnboardingView.swift in Sources */,
+				BF1060000000000000000000 /* SettingsShellView.swift in Sources */,
+				BF1070000000000000000000 /* StorageService.swift in Sources */,
+				BF1080000000000000000000 /* Migrations.swift in Sources */,
+				BF1090000000000000000000 /* SettingsStore.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BP4040000000000000000000 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BF10B0000000000000000000 /* StorageServiceTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		TD8010000000000000000000 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = TG5000000000000000000000 /* Varta */;
+			targetProxy = CP8000000000000000000000 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		BC7100000000000000000000 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				SDKROOT = macosx;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.10;
+			};
+			name = Debug;
+		};
+		BC7110000000000000000000 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.10;
+			};
+			name = Release;
+		};
+		BC7200000000000000000000 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Varta/Resources/Varta.entitlements;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_TESTABILITY = YES;
+				ENABLE_HARDENED_RUNTIME = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Varta/Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.varta.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.10;
+			};
+			name = Debug;
+		};
+		BC7210000000000000000000 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Varta/Resources/Varta.entitlements;
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Varta/Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.varta.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.10;
+			};
+			name = Release;
+		};
+		BC7300000000000000000000 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				ENABLE_TESTABILITY = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.varta.app.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.10;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Varta.app/Contents/MacOS/Varta";
+				TEST_TARGET_NAME = Varta;
+			};
+			name = Debug;
+		};
+		BC7310000000000000000000 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGNING_ALLOWED = NO;
+				CODE_SIGNING_REQUIRED = NO;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.varta.app.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.10;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Varta.app/Contents/MacOS/Varta";
+				TEST_TARGET_NAME = Varta;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		CL7000000000000000000000 /* Build configuration list for PBXProject "Varta" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BC7100000000000000000000 /* Debug */,
+				BC7110000000000000000000 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		CL7010000000000000000000 /* Build configuration list for PBXNativeTarget "Varta" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BC7200000000000000000000 /* Debug */,
+				BC7210000000000000000000 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		CL7020000000000000000000 /* Build configuration list for PBXNativeTarget "VartaTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BC7300000000000000000000 /* Debug */,
+				BC7310000000000000000000 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		PK6000000000000000000000 /* XCRemoteSwiftPackageReference "GRDB.swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/groue/GRDB.swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 7.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		PK6010000000000000000000 /* GRDB */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = PK6000000000000000000000 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
+			productName = GRDB;
+		};
+		PK6020000000000000000000 /* GRDB */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = PK6000000000000000000000 /* XCRemoteSwiftPackageReference "GRDB.swift" */;
+			productName = GRDB;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = PRJ0000000000000000000001 /* Project object */;
+}

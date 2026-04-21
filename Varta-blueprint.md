@@ -1,1523 +1,952 @@
-# Nepali-Aware Local AI Meeting Assistant for macOS (Apple Silicon)
-**Document Type:** Product Requirements Document + Technical Architecture + Build Blueprint  
-**Target Build Agent:** OpenAI Codex / Claude Code / Claude Desktop Agent  
-**Platform:** Native macOS desktop app, Apple Silicon only  
-**Authoring Goal:** This document is intended to be complete enough for an autonomous coding agent to implement the application without needing a separate PRD.  
-**Project Type:** Personal-use desktop application  
-**Primary Principle:** Free-first, local-first, privacy-first, Apple-native, and as powerful as possible using free/open-source components and built-in macOS frameworks.
+# Varta — Nepali-Aware, Apple-Silicon-Native AI Meeting Assistant
+
+**Document Type:** Product Requirements Document + Technical Architecture + Build Blueprint (v3)  
+**Supersedes:** `Varta-blueprint-v2.md` (v2). v2 is preserved; this document is authoritative.  
+**Target Build Agent:** Claude Code / Cowork / OpenAI Codex — any agent capable of reading this blueprint end-to-end and implementing autonomously.  
+**Platform:** Native macOS desktop application, Apple Silicon only. Not a web app. Not Electron or Tauri.  
+**Primary Owner:** Prabesh Bhetwal (single-user, personal-use).  
+**Core Principle:** Native by default. Python only where it wins decisively. Local-first for the MVP. Cloud, sync, semantic search, and advanced assistants are post-MVP layers. Bilingual (English + Nepali + code-switched) is a first-class constraint, not a stretch goal.
+
+---
+
+## 0. Changelog from v2
+
+This document incorporates all agreed refinements made after review of v2, including architecture tightening, MVP scope reduction, diarisation soft-dependency treatment, performance target calibration, and explicit product defaults.
+
+### Major changes from v2
+
+1. **MVP scope is now frozen to the true local core.**  
+   Google Drive, Google Calendar sync, semantic search, meeting chat, cloud API adapters, menu bar utility, live-caption HUD, Spotlight, Shortcuts, and other convenience features are explicitly moved out of the MVP and into later phases.
+
+2. **Diarisation is now a soft dependency.**  
+   `pyannote.audio` remains the preferred diarisation engine, but diarisation is no longer treated as a load-bearing subsystem. If the Python worker fails, transcription, summaries, transcript review, and calendar suggestion must still complete successfully.
+
+3. **Performance promises are reclassified.**  
+   Rigid promises are replaced by three bands:
+   - **Minimum acceptable**
+   - **Target**
+   - **Stretch target**
+
+4. **Resolved defaults are now explicit.**
+   - Default local LLM: **Llama 3.1 8B**
+   - Live-caption HUD: **Off by default**
+   - Calendar event mode: **Review always**
+   - Google Drive upload: **Manual trigger by default**
+   - Menu bar utility: **Deferred to v2**
+   - Icon style: **Minimalist glyph**
+
+5. **ScreenCaptureKit permission friction is now elevated to a first-class onboarding requirement.**  
+   The onboarding flow must explain clearly why macOS requires “Screen Recording” permission to capture system audio.
+
+6. **Python worker packaging is explicitly classified as the highest release risk.**  
+   The app must remain shippable without diarisation if worker packaging or notarisation becomes unstable.
 
 ---
 
 ## 1. Executive Summary
 
-Build a **native macOS desktop application** that functions like a private, local-first version of Granola-style AI meeting notes, but optimized for **Apple Silicon** and designed to support **English, Nepali, and mixed English-Nepali conversations**.
+Varta is a native macOS application for Apple Silicon that records, transcribes, summarises, translates, and files meetings. It is designed for a bilingual (English + Nepali + mixed) user, runs fully on-device by default, and supports Apple Calendar event suggestion and manual creation as part of the core workflow.
 
-The app must be able to:
+The MVP is intentionally narrow and local:
 
-- Record meeting audio from the Mac
-- Capture **system audio** and optionally microphone audio
-- Transcribe meetings locally
-- Detect and separate speakers
-- Support Nepali-language transcription and bilingual workflows
-- Summarize meetings into multiple useful formats
-- Translate transcript content between Nepali and English
-- Generate follow-up content such as emails, action items, task lists, and decision logs
-- Search and chat over past meetings
-- Optionally create a **Calendar event** from the meeting notes, either automatically or via user confirmation
-- Run primarily on-device using free native frameworks and open-source models, with a clean architecture that allows future optional paid cloud adapters without rewriting the app
+- Record microphone and/or system audio
+- Import audio and video files
+- Transcribe with timestamps
+- Review and correct the transcript
+- Generate local AI summaries, decisions, and action items
+- Translate outputs between English and Nepali
+- Suggest future calendar events and allow manual Apple Calendar creation
+- Store everything locally in SQLite + files
+- Gracefully attempt diarisation, without making the app depend on it
 
-This application is **not a web app**. It is a **desktop app for macOS on Apple Silicon only**.
+The app is designed to handle meeting durations up to **four continuous hours per session**, with disk-streamed capture, resumable processing, and checkpointed summarisation so a crash or lid-close never invalidates the entire job.
+
+The architecture follows three tiers:
+
+| Tier | Path | Role |
+|---|---|---|
+| Tier 1 — Primary native | SwiftUI + AppKit, ScreenCaptureKit, AVFoundation, whisper.cpp (Metal), MLX Swift LM, EventKit, SQLite/GRDB | Mainline MVP path |
+| Tier 2 — Restricted Python fallback | Isolated Python worker, child process over structured JSON/stdio | Optional diarisation, optional NLLB translation |
+| Tier 3 — Post-MVP optional adapters | Google Drive, Google Calendar, semantic search, meeting chat, cloud APIs | Later phases only |
+
+The app must ship as a signed, notarised `.app` bundle. No permanent REST service. No Docker. No Electron. No Tauri.
 
 ---
 
 ## 2. Product Vision
 
-The application should feel like a cross between:
+Varta should feel like a cross between a meeting recorder, an AI notepad, a private bilingual meeting memory, and a meeting-to-calendar workflow tool. It should be calm, fast, Apple-native, and trustworthy.
 
-- a **meeting recorder**
-- an **AI notepad**
-- a **personal meeting memory system**
-- a **meeting-to-calendar and meeting-to-output workflow engine**
+The product prioritises, in this order:
 
-The product should prioritize:
+1. **Correctness** — the transcript, summary, and extracted commitments must reflect what was actually said.
+2. **Privacy** — audio, transcripts, summaries, and outputs remain on device by default.
+3. **Usability** — the user finds what they need within two clicks of opening a meeting.
+4. **Reliability** — a crash, lid close, or worker failure must not destroy the entire workflow.
+5. **Speed** — processing should be comfortably usable on a 16 GB Apple Silicon Mac.
+6. **Convenience** — sync, cloud, and advanced retrieval come later.
 
-1. **Privacy**  
-   Audio, transcripts, summaries, embeddings, and generated outputs should remain local by default.
-
-2. **Accuracy**  
-   Focus on strong transcript quality, especially for mixed-language and low-resource Nepali use cases.
-
-3. **Usefulness over novelty**  
-   The generated outputs should be immediately practical:
-   - concise meeting summary
-   - action items with owners
-   - key decisions
-   - unresolved questions
-   - follow-up email
-   - translated summary
-   - searchable memory
-
-4. **Apple-native performance**  
-   Use Apple-native frameworks and Apple Silicon optimized local inference wherever possible.
-
-5. **Free-first architecture**  
-   The MVP must work without requiring paid APIs.
+If tradeoffs arise, choose in that order.
 
 ---
 
-## 3. Product Goals
+## 3. The True MVP Boundary
 
-### 3.1 Primary Goals
-- Build a **fully local, free-first macOS AI meeting assistant**
-- Achieve usable **English + Nepali** transcription
-- Support **speaker diarization**
-- Generate high-quality post-meeting notes and outputs
-- Allow the user to query and search previous meetings
-- Integrate with **Apple Calendar** using EventKit
+This section is authoritative. A coding agent must not quietly expand past this MVP boundary.
 
-### 3.2 Secondary Goals
-- Allow transcript correction and glossary-based post-processing
-- Provide bilingual transcript and bilingual summary views
-- Support multiple meeting note templates
-- Provide export formats such as Markdown, plain text, JSON, and optionally PDF later
+### 3.1 In-MVP (must build)
 
-### 3.3 Non-Goals for MVP
-Do **not** build these in MVP unless they fall out naturally from the core system:
-- multi-user cloud collaboration
-- browser access
-- SaaS billing
-- enterprise admin console
-- automatic meeting joins as a bot
+| Capability | MVP Status |
+|---|---|
+| Import audio/video file → transcript | ✓ |
+| Native recording (mic + system audio) | ✓ |
+| whisper.cpp transcription with timestamps | ✓ |
+| Transcript viewer with playback seek | ✓ |
+| Transcript correction with lock state | ✓ |
+| Local AI summary (MLX Swift LM) | ✓ |
+| Action items extraction | ✓ |
+| Decisions extraction | ✓ |
+| Concise + detailed summary | ✓ |
+| English-only / Nepali-only / mixed mode | ✓ |
+| Glossary table and replacement | ✓ |
+| EN↔NE translation of outputs | ✓ |
+| SQLite + local file storage | ✓ |
+| FTS keyword search | ✓ |
+| Apple Calendar event suggestion + manual creation | ✓ |
+| 4-hour continuous recording with checkpoints | ✓ |
+| Hierarchical Map-Reduce summarisation | ✓ |
+| Optional diarisation, non-blocking | ✓ |
+
+### 3.2 Explicitly out of MVP (must not build in the first pass)
+
+| Capability | Status |
+|---|---|
+| Google Drive upload | Post-MVP |
+| Google Calendar sync | Post-MVP |
+| Semantic search / embeddings | Post-MVP |
+| Meeting chat / RAG | Post-MVP |
+| Cloud API adapters | Post-MVP |
+| Live caption HUD | Post-MVP |
+| Menu bar mini app | Post-MVP |
+| Spotlight indexing | Post-MVP |
+| Shortcuts.app support | Post-MVP |
+| URL scheme | Post-MVP |
+| Voice-based speaker auto-labelling | Post-MVP |
+| Auto-recording from calendar triggers | Post-MVP |
+| Obsidian / Notes / Notion export | Post-MVP |
+
+### 3.3 Why the MVP is frozen this way
+
+Autonomous coding agents degrade badly when asked to build too many cross-domain subsystems simultaneously. The local-first core is the correct foundation:
+
+- native audio capture,
+- local storage,
+- local transcript,
+- local summarisation,
+- local translation,
+- manual calendar creation,
+- graceful optional diarisation.
+
+Everything else is an amplifier, not the foundation.
+
+---
+
+## 4. Non-Goals
+
+Do not build these in the MVP.
+
+- Multi-user cloud collaboration
+- Web or browser front end
+- SaaS subscription or billing
+- Enterprise admin console
+- Meeting bots that join calls
 - CRM integrations
-- external sharing links
-- cloud sync by default
-
----
-
-## 4. Product Definition
-
-### 4.1 Core Product Statement
-A native macOS app that records meetings locally, transcribes them with speaker attribution, supports Nepali and English, generates structured AI notes, enables local search and chat over meetings, and can create calendar events from meeting content.
-
-### 4.2 Primary Users
-- Personal user
-- Solo professional
-- Developer / analyst / researcher
-- Bilingual or multilingual user, especially English + Nepali
-
-### 4.3 Key User Scenarios
-1. Record a Zoom, Meet, or Teams meeting directly on the Mac
-2. Record an in-person conversation using microphone input
-3. Generate a clean meeting summary with action items afterward
-4. Translate a Nepali meeting into English
-5. Translate an English meeting summary into Nepali
-6. Search old meetings for decisions, dates, and commitments
-7. Create a calendar event from meeting notes or detected future commitments
+- Public sharing links
+- Always-on passive listening
+- Windows or Linux support
+- Intel Mac support
+- Full Google ecosystem integration in MVP
+- Agentic cross-meeting retrieval in MVP
 
 ---
 
 ## 5. Constraints and Assumptions
 
-### 5.1 Platform Constraints
-- macOS only
+### 5.1 Platform
+- macOS 14 (Sonoma) or later
 - Apple Silicon only
-- Must support current supported macOS versions where ScreenCaptureKit and EventKit are practical
-- Must be optimized for local inference on Apple Silicon
+- Minimum 16 GB unified memory
+- 32 GB recommended for comfortable long-audio + higher-quality local model operation
+- SSD with at least 20 GB free for models, audio, and artifacts
 
-### 5.2 Hardware Assumptions
-Baseline target machine:
-- Apple Silicon MacBook Pro / Mac mini / Mac Studio
-- 16 GB unified memory minimum
-- Better experience on 32 GB+ machines, but 16 GB should remain viable
+### 5.2 Audio
+- Maximum continuous recording duration: **4 hours per session**
+- Common scenario: English + Nepali mixed speech
+- Import path must accept audio and video files
 
-### 5.3 Personal-Use Assumption
-This is a personal-use application. Therefore:
-- local storage is acceptable
-- single-user local database is acceptable
-- identity/authentication is not needed for MVP
-- collaboration is not required in MVP
+### 5.3 Personal-use assumption
+- Single-user local database
+- No app login or account system
+- OAuth not required in MVP
+- Secrets stored in Keychain when later connectors are added
 
----
-
-## 6. “Free + Most Powerful APIs” Interpretation
-
-This request contains a tension:
-- “completely free”
-- “most powerful APIs”
-
-The design must resolve this honestly.
-
-### 6.1 Final Interpretation
-The app should use the **most powerful free or built-in APIs first**, in this order:
-
-1. **Native macOS APIs**
-   - ScreenCaptureKit
-   - AVFoundation
-   - EventKit
-   - AppKit / SwiftUI
-   - FileManager / Core Data alternatives avoided in favor of SQLite for portability
-
-2. **Powerful open-source local models**
-   - faster-whisper
-   - WhisperX
-   - pyannote.audio
-   - MLX / MLX-LM
-   - NLLB
-
-3. **Optional API adapter layer**
-   - Keep the code structured so paid APIs can be added later
-   - Paid APIs must not be required for MVP
-
-### 6.2 Final Rule
-The MVP must run with:
-- **no paid cloud APIs**
-- **no monthly subscription**
-- **no external dependency required for core functionality**
+### 5.4 Core behaviour assumption
+- If diarisation fails, the product still succeeds
+- If translation fallback fails, the original transcript still remains usable
+- If summarisation fails, transcript review still remains usable
+- If calendar candidate extraction is weak, manual transcript review remains the source of truth
 
 ---
 
-## 7. Recommended Final Tech Stack
+## 6. Architectural Principles
 
-This is the **recommended implementation stack**.
+These rules are load-bearing.
 
-### 7.1 Desktop Application Layer
-- **Language:** Swift
-- **UI:** SwiftUI first
-- **Native integrations / advanced macOS hooks:** AppKit bridge only where needed
-- **Reason:** Native Apple Silicon desktop experience, best integration with permissions, ScreenCaptureKit, EventKit, menus, windows, and performance
-
-### 7.2 ML / Processing Layer
-- **Primary processing runtime:** Python
-- **Reason:** Best ecosystem for transcription, diarization, alignment, translation, and local model tooling
-- The Swift app should coordinate a local Python worker / service process
-
-### 7.3 Local LLM Runtime
-- **Preferred:** MLX / MLX-LM on Apple Silicon
-- **Fallback abstraction:** Ollama adapter or llama.cpp-compatible adapter if needed
-- **Reason:** MLX is optimized for Apple Silicon and fits the local-first requirement
-
-### 7.4 Local Database
-- **SQLite**
-- Reason:
-  - single-user local app
-  - fast enough
-  - easy backup
-  - robust
-  - simple for autonomous coding agents to implement
-
-### 7.5 Search / Retrieval
-- SQLite FTS for keyword search
-- Chroma or LanceDB or a lightweight local vector index for semantic search
-- Embeddings stored locally
-
-### 7.6 File Storage
-Per-meeting local folder + metadata in SQLite
+1. **Native by default.** Swift / C++ / Metal before Python.
+2. **One model family resident at a time.** Whisper, local LLM, diarisation worker, translation worker must not co-reside unnecessarily.
+3. **Disk-stream everything long.** No 4-hour in-memory audio buffers.
+4. **Every stage is resumable.** Recording, transcription, summarisation.
+5. **No permanent local REST service.** Spawn-on-demand worker over JSON/stdin/stdout.
+6. **Diarisation is non-blocking.** The app must succeed without it.
+7. **Cloud is not part of the MVP.**
+8. **Correctness outranks speed.**
+9. **Usability outranks feature breadth.**
+10. **Performance numbers are guidance bands, not rigid mathematical promises.**
 
 ---
 
-## 8. Native macOS Framework Requirements
+## 7. High-Level Architecture
 
-### 8.1 ScreenCaptureKit
-Use for:
-- capturing system audio from on-screen meeting apps
-- high-performance media capture
+### 7.1 Process model
 
-### 8.2 AVFoundation
-Use for:
-- microphone capture
-- local audio session coordination
-- audio format normalization if needed
+```text
+┌──────────────────────────────────────────────────────────────┐
+│  Varta.app  (single signed macOS process)                   │
+│                                                              │
+│  ┌─────────────────────┐   ┌──────────────────────────────┐  │
+│  │ UI (SwiftUI +       │   │ Core Services (Swift)       │  │
+│  │ AppKit bridges)     │◄─►│ • RecorderCoordinator       │  │
+│  │                     │   │ • TranscriptionService      │  │
+│  │                     │   │   (whisper.cpp + Metal)     │  │
+│  │                     │   │ • SummariserService         │  │
+│  │                     │   │   (MLX Swift LM)            │  │
+│  │                     │   │ • TranslationService        │  │
+│  │                     │   │ • CalendarService           │  │
+│  │                     │   │   (EventKit)                │  │
+│  │                     │   │ • MemoryManager             │  │
+│  │                     │   │ • JobQueue / Checkpointer   │  │
+│  │                     │   │ • StorageService            │  │
+│  │                     │   │   (GRDB + SQLite + FTS5)    │  │
+│  └──────────▲──────────┘   └──────────────┬───────────────┘  │
+└─────────────┼─────────────────────────────┼──────────────────┘
+              │                             │ spawn on demand
+              │                             ▼
+              │          ┌──────────────────────────────────┐
+              │          │ varta-worker (Python, embedded)  │
+              │          │ • pyannote diarisation           │
+              │          │ • optional NLLB translation      │
+              │          │ Lifetime: single job, then exit  │
+              │          └──────────────────────────────────┘
+              │
+              ▼
+   ┌──────────────────────────────┐
+   │ Filesystem + SQLite          │
+   │ ~/Library/Application        │
+   │ Support/Varta/               │
+   └──────────────────────────────┘
+```
 
-### 8.3 EventKit
-Use for:
-- reading user calendar access when permitted
-- creating calendar events from meeting notes
-- optional calendar lookup for meeting context
+### 7.2 Runtime split
 
-### 8.4 SwiftUI
-Use for:
-- all primary UI surfaces
-
-### 8.5 AppKit
-Use only where SwiftUI is insufficient, including:
-- advanced menu integration
-- status bar / menu bar functionality if needed
-- more granular macOS window behavior
-- permission workflows that are easier with AppKit wrappers
-
----
-
-## 9. High-Level Architecture
-
-### 9.1 Top-Level Components
-1. **Native macOS host app (Swift/SwiftUI)**
-2. **Audio capture subsystem**
-3. **Python processing engine**
-4. **Local inference manager**
-5. **Meeting storage and indexing layer**
-6. **Calendar integration layer**
-7. **Prompt/template engine**
-8. **Search/chat subsystem**
-
-### 9.2 Process Architecture
-The native app should remain responsive and should **not** perform heavy ML inference directly in the main UI process.
-
-#### Recommended approach
-- SwiftUI host application launches and manages:
-  - a local Python worker
-  - or multiple subprocesses for transcription, alignment, diarization, translation, and summarization
-- Communication via:
-  - local IPC
-  - local HTTP on loopback
-  - or stdin/stdout process protocol
-- Prefer a clean, explicit service boundary
-
-### 9.3 Recommended Runtime Split
-#### Swift app responsibilities
-- Permissions
-- Recording start/stop
+**Swift / native path**
 - UI
-- Job queue
-- File organization
-- Database writes
-- Search UX
-- Calendar sync UX
+- permissions
+- recording coordination
+- file I/O
+- transcription
+- local summarisation
+- local translation orchestration
+- Apple Calendar creation
+- storage and FTS search
+- job queue and checkpointing
 
-#### Python worker responsibilities
-- STT
-- alignment
-- diarization
-- translation
-- summarization orchestration
-- embeddings generation
-- search preprocessing
+**Python worker**
+- diarisation
+- optional NLLB translation only if selected later in MVP or in a fallback path
 
----
+### 7.3 Critical classification
 
-## 10. End-to-End Workflow
+The Python worker is not a peer to the native path.  
+It is a **contained impurity**.
 
-### 10.1 Recording Workflow
-1. User opens app
-2. User clicks **Start Recording**
-3. User chooses source mode:
-   - system audio only
-   - microphone only
-   - mixed system + microphone
-4. App requests required permissions if not already granted
-5. App begins recording
-6. App writes raw audio to meeting folder
-7. User clicks **Stop Recording**
-8. App finalizes audio file
-9. App queues processing pipeline
+If the worker:
+- fails to launch,
+- crashes,
+- cannot be signed,
+- or cannot be notarised cleanly,
 
-### 10.2 Processing Workflow
-1. Normalize audio
-2. Run voice activity detection
-3. Run transcription
-4. Run timestamp alignment
-5. Run diarization
-6. Merge transcript + diarization
-7. Detect per-segment language where possible
-8. Generate transcript artifacts
-9. Generate summaries and structured outputs
-10. Generate translations
-11. Generate embeddings
-12. Save results to DB and files
-13. Mark meeting as searchable
-
-### 10.3 Calendar Event Workflow
-1. Summarization / extraction step identifies:
-   - future date/time commitments
-   - follow-up meetings
-   - deadlines
-   - appointments
-2. Calendar extraction engine builds candidate event objects
-3. User sees:
-   - title
-   - date/time
-   - notes
-   - attendees if inferable
-4. User confirms or edits
-5. App creates event via EventKit
-
-#### Optional automation mode
-Allow a user preference:
-- “Always ask before creating event”
-- “Create draft event only”
-- “Auto-create event when confidence exceeds threshold”
-Default must be **ask before creating**
+the app must still be able to ship in a functional MVP configuration with diarisation disabled.
 
 ---
 
-## 11. Core Feature Set
+## 8. Technology Stack
 
-### 11.1 Recording
-Must support:
-- Start / Stop recording
-- Visible timer
-- Recording state indicator
-- Save audio locally
-- Record from:
-  - microphone
-  - system audio
-  - both when possible
+### 8.1 Core stack
 
-### 11.2 Transcription
-Must support:
-- local transcription
-- English
-- Nepali
-- mixed-language handling as best effort
-- timestamped output
-- transcript correction
+| Layer | Choice | Notes |
+|---|---|---|
+| UI | SwiftUI primary, AppKit bridges only | Native macOS UX |
+| Language | Swift 5.10+ | Strict concurrency mode on |
+| Audio capture | ScreenCaptureKit + AVFoundation + AVAssetWriter | System audio + mic |
+| Transcription | whisper.cpp | Metal acceleration on Apple Silicon |
+| Local LLM | MLX Swift LM | Default model: Llama 3.1 8B |
+| Translation | Local LLM prompt path by default | Optional NLLB later if needed |
+| Storage | SQLite + GRDB | Local-first |
+| Search | SQLite FTS5 | Keyword search only in MVP |
+| Calendar | EventKit | Apple Calendar only in MVP |
+| Packaging | Xcode, hardened runtime, notarised `.app` | Native delivery |
+| Secrets | Security.framework / Keychain | For future connectors |
 
-### 11.3 Speaker Diarization
-Must support:
-- speaker segmentation
-- speaker labels such as Speaker 1, Speaker 2
-- optionally allow user rename after the meeting
+### 8.2 Python worker stack
 
-### 11.4 Summarization
-Must support at minimum:
-- concise summary
-- detailed summary
-- action items
-- decisions
-- unresolved questions
-- follow-up email draft
-- task list
+| Layer | Choice |
+|---|---|
+| Interpreter | Embedded Python 3.11 |
+| Diarisation | `pyannote.audio` |
+| Translation fallback | Optional NLLB only |
+| IPC | JSON over stdin/stdout |
+| Packaging | PyInstaller or python-build-standalone |
 
-### 11.5 Translation
-Must support:
-- transcript English → Nepali
-- transcript Nepali → English
-- summary English → Nepali
-- summary Nepali → English
-- preserve names, acronyms, and glossary terms
+### 8.3 Defaults resolved
 
-### 11.6 Search and Chat
-Must support:
-- keyword search
-- full-text search
-- semantic search
-- chat with meeting transcript
-- filtering by date, speaker, meeting title
-
-### 11.7 Calendar Sync
-Must support:
-- Apple Calendar access
-- event creation from extracted commitments
-- optional read existing event context when permission is granted
-
-### 11.8 Export
-Must support:
-- Markdown export
-- Plain text export
-- JSON export
-- Copy summary to clipboard
+| Decision | Final Default |
+|---|---|
+| Default local LLM | **Llama 3.1 8B** |
+| HUD live-caption | **Off by default** |
+| Auto-event mode | **Review always** |
+| Google Drive upload | **Manual trigger** (post-MVP) |
+| Menu bar app | **Deferred to v2** |
+| Icon style | **Minimalist glyph** |
 
 ---
 
-## 12. Audio Capture Requirements
+## 9. Long-Audio Handling (4-Hour Class Support)
 
-### 12.1 Supported Recording Modes
-1. **System audio only**
-2. **Microphone only**
-3. **System + microphone**
-4. **Manual file import** for audio/video recordings
+### 9.1 Capture layer
+- Audio written to disk in real time via `AVAssetWriter`
+- Archive format: AAC or M4A
+- Processing path: 16 kHz mono WAV
+- In-memory buffer capped tightly
+- Recording session actor supports start, pause, resume, stop
+- Lunch break or split-session flows are supported as separate linked sessions
 
-### 12.2 Audio File Requirements
-Preferred storage format:
-- WAV during processing
-- optionally FLAC archive later if desired
+### 9.2 Processing layer
+- Whisper processes incrementally in bounded windows
+- Transcript chunks committed to SQLite every few minutes
+- Processing yields between windows to reduce thermal pressure
+- App subscribes to thermal state and battery state
+- Critical thermal states pause heavy processing, not recording integrity
 
-### 12.3 Audio Normalization
-Normalize all audio to pipeline input standard:
-- mono when required by downstream model
-- 16 kHz for ASR / diarization if needed
-- preserve original raw file as archive
+### 9.3 Summarisation layer
+Default summarisation is hierarchical Map-Reduce:
+- 10-minute overlapping window summaries
+- 30-minute section synthesis
+- final meeting synthesis
 
-### 12.4 Important OS-Level Behavior
-- System audio capture support varies by macOS version and configuration
-- On supported macOS versions, use ScreenCaptureKit-based audio capture
-- For mixed microphone + system capture, design a robust fallback path
+This keeps the process memory-safe on 16 GB machines.
 
-### 12.5 Failure Handling
-If direct system-audio capture fails:
-- allow user to import recording manually
-- show explicit error states
-- do not silently fail
-
----
-
-## 13. STT (Speech-to-Text) Requirements
-
-### 13.1 Chosen Primary STT Engine
-- **faster-whisper**
-
-### 13.2 Why
-- fast
-- strong multilingual performance
-- efficient on local hardware
-- suitable for long-form meeting transcription
-
-### 13.3 Model Strategy
-Use configurable model profiles:
-- **Default Balanced:** `large-v3` or fastest practical equivalent
-- **Low Memory:** smaller model
-- **High Accuracy:** larger multilingual model if hardware allows
-
-### 13.4 Runtime Profiles
-Provide a settings option:
-- Speed mode
-- Balanced mode
-- Accuracy mode
-
-### 13.5 Transcript Output Requirements
-Each segment must contain:
-- segment id
-- start time
-- end time
-- text
-- detected language if available
-- confidence if available
-- speaker label after merge
+### 9.4 Recovery
+- crash-safe checkpoints
+- resumable job queue
+- persisted processing state
+- audio files never rewritten after finalisation
 
 ---
 
-## 14. Timestamp Alignment Requirements
+## 10. Memory, Thermal, and Power Discipline
 
-### 14.1 Chosen Tool
-- **WhisperX**
+### 10.1 MemoryManager
+A Swift actor owns model lifecycle.
 
-### 14.2 Purpose
-Use WhisperX after base transcription to improve:
-- segment boundaries
-- word-level timestamps
-- sync between transcript and playback
-- transcript seek accuracy
-- alignment with speaker diarization windows
+Rules:
+- only one model family resident at a time
+- transitions must explicitly unload the previous family
+- worker termination is the release mechanism for Python-resident models
+- low available memory produces warnings and can pause later stages
 
-### 14.3 Result
-The UI must be able to:
-- click transcript line
-- jump to timestamp
-- highlight current segment during playback
+### 10.2 Thermal hooks
+The app must respond to:
+- `.fair`
+- `.serious`
+- `.critical`
 
----
+Behaviour:
+- reduce concurrency on heat rise
+- increase yields between chunks
+- pause on critical thermal pressure
 
-## 15. Speaker Diarization Requirements
+### 10.3 Power hooks
+On battery:
+- reduce concurrency
+- prioritise correctness over speed
+- avoid optional heavy post-processing until on AC if necessary
 
-### 15.1 Chosen Tool
-- **pyannote.audio**
-
-### 15.2 Output Requirements
-Generate speaker turns as:
-- speaker label
-- start time
-- end time
-
-### 15.3 Merge Logic
-After transcription and alignment:
-- assign transcript segments to the most overlapping diarized speaker segment
-- allow confidence-based tie handling
-- store raw diarization and merged results separately
-
-### 15.4 Speaker Naming
-MVP:
-- Speaker 1
-- Speaker 2
-- Speaker 3
-
-Post-MVP:
-- allow manual renaming
-- persist aliases across meetings if user chooses
+### 10.4 Lid / sleep
+On sleep or lid close:
+- flush current recording writer
+- checkpoint processing state
+- pause queued heavy jobs
+- resume safely on wake
 
 ---
 
-## 16. Nepali Language Requirements
+## 11. Audio Capture Specification
 
-### 16.1 Critical Requirement
-The application must explicitly support:
-- Nepali transcription
-- Nepali translation
-- English-Nepali mixed conversations
+### 11.1 Sources
 
-### 16.2 Practical Reality
-Nepali transcription quality may be lower than English depending on:
-- accent variation
-- microphone quality
-- overlapping speakers
-- code-switching
-- technical vocabulary
-- named entities
+| Source | Framework | Notes |
+|---|---|---|
+| System audio | ScreenCaptureKit | Requires Screen Recording permission |
+| Microphone | AVFoundation | Requires microphone permission |
+| Mixed | Audio mixing node | Combined recording path |
+| File import | AVAsset extraction | Audio/video input support |
 
-The product must be designed to compensate with:
-- glossary support
-- correction UI
-- segment-by-segment language tagging
-- post-processing cleanup
+### 11.2 Output format
+- archive: AAC/M4A
+- processing: 16 kHz mono WAV
 
-### 16.3 Language Handling Modes
-Add a user setting:
-- Auto detect
+### 11.3 Important onboarding friction
+macOS requires **Screen Recording** permission to capture system audio even when no video is saved.
+
+This must be explained explicitly in onboarding and settings.
+
+Recommended wording:
+
+> “macOS requires Screen Recording permission to capture system audio. Varta uses this permission only to extract audio unless you explicitly choose to capture video in a future version.”
+
+### 11.4 Failure modes
+- partial recordings are always preserved
+- permission denial disables specific modes, not the whole app
+- recording failures surface clearly and never silently discard captured audio
+
+---
+
+## 12. Transcription Specification
+
+### 12.1 Engine
+- `whisper.cpp`
+- Metal backend
+- default model: `large-v3` quantised profile appropriate for Apple Silicon
+- lower-memory profile available
+
+### 12.2 Language handling
+Modes:
 - English only
 - Nepali only
-- Mixed English + Nepali
+- Mixed / auto-detect
 
-### 16.4 Per-Segment Language Detection
-Because mixed-language meetings are common, the pipeline should attempt to assign a detected language per segment where possible.
+Each transcript segment stores:
+- text
+- corrected text
+- language tag
+- timestamps
+- optional speaker label
+- lock state
 
-### 16.5 Transcript Editing Support
-The user must be able to:
-- edit incorrect Nepali transcript text
-- lock corrected text
-- regenerate summaries from corrected transcript
+### 12.3 Hallucination mitigations
+- VAD pre-filter
+- low temperature
+- repetition loop detection
+- rolling prompt context between windows
+- retranscription of obvious bad windows
 
-### 16.6 Glossary Support
-Implement a local glossary table for:
-- names
-- company names
-- project names
-- acronyms
-- domain-specific vocabulary
-- Nepali transliterations
-
-Glossary entries should support:
-- canonical form
-- alternate spellings
-- language-specific forms
-- replacement priority
+### 12.4 Output shape
+Every transcript segment is persisted and correction-friendly.  
+Corrections never overwrite raw output destructively.
 
 ---
 
-## 17. Translation Requirements
+## 13. Speaker Diarisation Specification
 
-### 17.1 Chosen Translation Engine
-- **NLLB family**, local if feasible
+### 13.1 Status
+Diarisation is **MVP-compatible but non-blocking**.
 
-### 17.2 Translation Targets
-Support:
-- English → Nepali
-- Nepali → English
+### 13.2 Hard rule
+If diarisation fails, the following must still succeed:
+- transcription
+- summary generation
+- action item extraction
+- decisions extraction
+- transcript review
+- Apple Calendar suggestion flow
 
-### 17.3 Translation Quality Rules
-The translator must:
-- preserve names
-- preserve technical terms where appropriate
-- avoid literal mistranslation of product names and jargon
-- respect glossary overrides
+### 13.3 Behaviour
+- default may remain available in settings, but failure must degrade gracefully
+- the UI must clearly show when speaker separation is unavailable
+- fallback transcript is single-speaker or unlabeled-speaker friendly
 
-### 17.4 Translation Modes
-1. Translate transcript
-2. Translate summary
-3. Translate action items
-4. Translate decisions
-5. Translate generated email
+### 13.4 Merge logic
+If available:
+- overlap-based matching of diarisation segments to transcript segments
+- ambiguous merges flagged for review
+- raw diarisation output preserved separately
 
-### 17.5 Bilingual UX
-The meeting detail view should allow:
-- original only
-- translated only
-- side-by-side bilingual mode
+### 13.5 Release-critical note
+If packaging or notarisation of the Python worker becomes unstable, the app must ship with diarisation disabled rather than block release.
 
 ---
 
-## 18. LLM Summarization and Content Generation
+## 14. Multilingual Strategy (English + Nepali + Code-Switched)
 
-### 18.1 Preferred Local Inference Stack
-- **MLX / MLX-LM**
+### 14.1 First-class scenario
+The product is graded on mixed Nepali-English audio, not just English-only audio.
 
-### 18.2 Why
-- optimized for Apple Silicon
-- local-first
-- strong future compatibility with Apple hardware
-- avoids paid APIs
+### 14.2 Pipeline rules
+- VAD before transcription
+- conservative decode settings
+- per-window language tagging
+- user override modes
+- rolling context to stabilise code-switched segments
 
-### 18.3 Model Strategy
-Use an abstraction layer so the user can choose among local models.
+### 14.3 Nepali-specific mitigations
+- Unicode normalisation
+- glossary-based replacements
+- Devanagari-aware cleanup
+- domain vocabulary support
 
-Recommended default class:
-- compact instruct model in roughly 7B–8B parameter class, quantized for Apple Silicon
+### 14.4 Translation strategy
+For the MVP:
+- prioritise translation of **summaries and structured outputs**
+- raw full-transcript translation is secondary
+- default path is local LLM-based translation
+- optional NLLB fallback may exist but should not complicate the first usable build
 
-### 18.4 Summary Output Types
-The app must support generation of:
+### 14.5 Bilingual UX
+Views can show:
+- original
+- translated
+- bilingual side-by-side
 
-#### Standard outputs
-- one-paragraph summary
-- bullet summary
+At minimum, summaries and key outputs must support this.
+
+---
+
+## 15. Summarisation and Content Generation
+
+### 15.1 Engine
+- MLX Swift LM
+- default model: **Llama 3.1 8B**
+
+### 15.2 Required outputs
+- concise summary
 - detailed summary
-
-#### Structured outputs
-- action items with owner and due date if inferable
-- key decisions
-- unresolved questions
-- blockers / risks
-- next steps
-
-#### Communication outputs
-- follow-up email
-- Slack-style update
-- project update note
-- personal recap
-
-#### Bilingual outputs
-- English summary
-- Nepali summary
-- English follow-up email
-- Nepali follow-up note
-
-### 18.5 Regeneration Rules
-The user must be able to:
-- regenerate outputs from raw transcript
-- regenerate outputs from corrected transcript
-- switch templates and rerun generation
-
-### 18.6 Prompt Templates
-Templates must be file-based and editable locally.
-
-Template categories:
-- General meeting
-- Stand-up
-- Interview
-- Client call
-- 1:1
-- Project planning
-- Brainstorming
-- Personal conversation / note capture
-
----
-
-## 19. Calendar Sync Requirements
-
-### 19.1 Framework
-- EventKit
-
-### 19.2 Core Use Cases
-1. Create a follow-up meeting event from extracted commitments
-2. Convert “let’s meet next Tuesday at 3 PM” into a suggested event
-3. Attach meeting summary to event notes
-4. Optionally match a recorded meeting to an existing calendar event
-
-### 19.3 Event Extraction Pipeline
-The summarization system should produce structured candidate events:
-- title
-- start date/time
-- end date/time or default duration
-- notes
-- confidence score
-- source transcript references
-
-### 19.4 Event Creation UX
-Display proposed event in confirmation sheet:
-- editable title
-- editable date/time
-- editable notes
-- create button
-- cancel button
-
-### 19.5 Automatic Matching with Existing Events
-If calendar access is granted, the app may:
-- read today’s calendar events
-- suggest linking a recording to the nearest scheduled meeting
-- inherit title and time range if confidence is high
-
-This must be optional and privacy-conscious.
-
-### 19.6 Default Behavior
-Default:
-- read/write permission only after explicit user consent
-- ask before event creation
-
----
-
-## 20. Search and Chat Requirements
-
-### 20.1 Search Modes
-1. Keyword search
-2. Full-text search
-3. Semantic search
-4. Filtered search
-
-### 20.2 Filter Options
-- date range
-- title
-- speaker
-- language
-- tag
-- summary type
-
-### 20.3 Meeting Chat
-The user should be able to ask:
-- “What decisions were made?”
-- “What did Speaker 2 say about budget?”
-- “Which meetings mentioned visa?”
-- “Summarise only the Nepali sections.”
-- “List all deadlines mentioned last week.”
-
-### 20.4 RAG Scope
-Chat should retrieve from:
-- transcript chunks
-- corrected transcript
-- summaries
+- bullet summary
 - action items
 - decisions
-- translations if available
+- unresolved questions
+- follow-up email
+- calendar candidates
 
-### 20.5 Citation Requirement
-Every answer in meeting chat should include:
-- source meeting title
-- timestamp references where possible
+### 15.3 Prompt templates
+Prompt files must be external and editable:
+- window summary
+- section synthesis
+- final summary
+- action items
+- decisions
+- unresolved questions
+- follow-up email
+- calendar candidates
+- translation
+
+### 15.4 Regeneration
+Any output can be regenerated independently from:
+- raw transcript
+- corrected transcript
+- corrected transcript + glossary
 
 ---
 
-## 21. Data Model
+## 16. Calendar Integration (MVP)
 
-Use SQLite. The schema should be explicit and normalized enough for future extension.
+### 16.1 Scope
+Only **Apple Calendar** is part of the MVP.
 
-### 21.1 Core Tables
+### 16.2 Framework
+- `EventKit`
+
+### 16.3 Behaviour
+- summariser emits calendar candidates
+- user reviews candidates in the meeting view
+- user can manually create an Apple Calendar event
+- created events are linked back to the meeting locally
+
+### 16.4 Default posture
+**Review always** is the default.  
+Auto-create is not part of the MVP default path.
+
+### 16.5 Why
+Calendar integrity matters more than automation cleverness.
+
+---
+
+## 17. Storage, Search, and Data Model
+
+### 17.1 Location
+- database: `~/Library/Application Support/Varta/varta.sqlite`
+- meeting artifacts: `~/Library/Application Support/Varta/meetings/{meeting_uuid}/`
+- models: `~/Library/Application Support/Varta/models/`
+- logs: `~/Library/Logs/Varta/`
+
+### 17.2 Core tables
+At minimum:
 - `meetings`
 - `audio_files`
 - `transcript_segments`
-- `diarization_segments`
-- `speakers`
-- `translations`
 - `summaries`
 - `generated_outputs`
-- `embeddings`
-- `calendar_links`
 - `glossary_terms`
 - `jobs`
+- `processing_state`
 - `settings`
-- `tags`
+- `calendar_links`
 
-### 21.2 Suggested Schema Sketch
+Optional MVP table:
+- `diarization_segments`
 
-#### meetings
-- id
-- uuid
-- title
-- source_type
-- recording_mode
-- language_mode
-- start_time
-- end_time
-- duration_seconds
-- notes_raw
-- status
-- created_at
-- updated_at
+### 17.3 Search
+Only **FTS keyword search** is in the MVP.
 
-#### audio_files
-- id
-- meeting_id
-- original_path
-- normalized_path
-- sample_rate
-- channels
-- duration_seconds
-- file_size_bytes
-- created_at
-
-#### transcript_segments
-- id
-- meeting_id
-- segment_index
-- start_seconds
-- end_seconds
-- speaker_id nullable
-- detected_language nullable
-- confidence nullable
-- original_text
-- corrected_text nullable
-- locked boolean
-- created_at
-- updated_at
-
-#### diarization_segments
-- id
-- meeting_id
-- start_seconds
-- end_seconds
-- raw_speaker_label
-- confidence nullable
-
-#### speakers
-- id
-- meeting_id
-- speaker_label
-- user_alias nullable
-- color nullable
-
-#### translations
-- id
-- meeting_id
-- source_language
-- target_language
-- content_type
-- source_segment_id nullable
-- translated_text
-- created_at
-
-#### summaries
-- id
-- meeting_id
-- template_name
-- language
-- summary_type
-- content
-- model_name
-- generated_from_corrected_transcript boolean
-- created_at
-
-#### generated_outputs
-- id
-- meeting_id
-- output_type
-- language
-- content
-- metadata_json
-- created_at
-
-#### embeddings
-- id
-- meeting_id
-- segment_id nullable
-- chunk_text
-- embedding_vector_ref
-- created_at
-
-#### calendar_links
-- id
-- meeting_id
-- event_identifier
-- calendar_title
-- linked_at
-
-#### glossary_terms
-- id
-- term
-- canonical_form
-- language
-- replacement_text
-- priority
-- active
-
-#### jobs
-- id
-- meeting_id nullable
-- job_type
-- status
-- progress
-- payload_json
-- error_message nullable
-- created_at
-- updated_at
+No embeddings. No semantic retrieval. No RAG in the MVP.
 
 ---
 
-## 22. File and Folder Layout
+## 18. UI / UX Specification
 
-### 22.1 App Project Layout
-Recommended top-level structure:
+### 18.1 Surfaces in MVP
+- Main window — Home
+- Main window — Meeting Detail
+- Main window — Search
+- Main window — Settings
+- Import sheet
+- Recording controls
+- Calendar review sheet
+- Onboarding
 
-```text
-MeetingAssistant/
-  macos-app/
-    MeetingAssistant.xcodeproj
-    MeetingAssistantApp/
-      App/
-      Features/
-      Shared/
-      Services/
-      Models/
-      Views/
-      ViewModels/
-      Native/
-      Resources/
-  python-worker/
-    app/
-      main.py
-      api/
-      pipeline/
-      stt/
-      alignment/
-      diarization/
-      translation/
-      llm/
-      embeddings/
-      calendar/
-      storage/
-      utils/
-    models/
-    requirements.txt
-    pyproject.toml
-  shared/
-    prompts/
-    templates/
-    schemas/
-  storage/
-    meetings/
-    database/
-    logs/
-  docs/
-```
+### 18.2 Not in MVP
+- live-caption HUD default workflow
+- menu bar mini-app
+- semantic search chat
+- Spotlight surface
+- Shortcuts integration
 
-### 22.2 Per-Meeting Storage Layout
-```text
-storage/meetings/{meeting_uuid}/
-  audio/
-    original.wav
-    normalized.wav
-  transcript/
-    transcript_raw.json
-    transcript_merged.json
-    transcript_corrected.json
-  outputs/
-    summary_en.md
-    summary_ne.md
-    action_items.json
-    decisions.json
-    followup_email_en.md
-    followup_note_ne.md
-  metadata/
-    meeting.json
-    processing.json
-```
-
----
-
-## 23. UI / UX Requirements
-
-### 23.1 Main Screens
-1. Home / Recent Meetings
-2. Recording Screen
-3. Meeting Detail Screen
-4. Search Screen
-5. Settings Screen
-6. Calendar Review / Event Suggestion Sheet
-7. Processing Queue / Job Status Screen
-
-### 23.2 Home Screen
-Must show:
-- recent meetings
-- search bar
-- start recording button
-- import audio button
-- processing jobs section
-
-### 23.3 Recording Screen
-Must show:
-- title field
-- audio source mode
-- timer
-- waveform or level meter
-- recording status
-- stop button
-- optional quick note field
-
-### 23.4 Meeting Detail Screen
-Tabs or segmented controls:
+### 18.3 Meeting detail tabs
+At minimum:
 - Summary
 - Transcript
 - Translation
 - Outputs
-- Search/chat
-- Calendar suggestions
+- Calendar
 
-### 23.5 Transcript Screen
-Must support:
-- timestamp click
-- speaker labels
-- edit mode
-- lock corrected segment
-- search within transcript
-- filter by speaker
-- filter by language
+### 18.4 Transcript tab
+- virtualised list
+- click-to-seek timestamps
+- correction UI
+- language and speaker pill display
+- filtering and search within transcript
 
-### 23.6 Outputs Screen
-Must support:
-- regenerate output
-- choose template
-- choose language
-- copy output
-- export output
-
-### 23.7 Search/Chat Screen
-Must support:
-- semantic question answering
-- result citations
-- timestamp references
-
-### 23.8 Settings Screen
-Must support:
-- model selection
-- language mode default
-- transcript quality mode
-- storage location
-- calendar permissions
-- auto event suggestion mode
-- glossary editor
-- privacy settings
-
----
-
-## 24. Processing Pipeline Design
-
-### 24.1 Pipeline Steps
-1. Ingest
-2. Normalize audio
-3. VAD
-4. Transcribe
-5. Align
-6. Diarize
-7. Merge
-8. Language detect segments
-9. Generate outputs
-10. Translate
-11. Embed
-12. Index
-13. Suggest calendar events
-
-### 24.2 Pipeline Rules
-- Every stage must write intermediate artifacts
-- Failures must be resumable
-- Jobs must be idempotent where possible
-- User must be able to rerun individual stages
-
-### 24.3 Job Types
-- record_audio
-- import_audio
-- normalize_audio
-- transcribe_audio
-- align_transcript
-- diarize_audio
-- merge_transcript
-- detect_language
-- generate_summary
-- translate_outputs
-- embed_chunks
-- index_meeting
-- suggest_calendar_events
-
----
-
-## 25. Performance Strategy for Apple Silicon
-
-### 25.1 Local Model Execution Strategy
-- Prefer models optimized or converted for Apple Silicon where possible
-- Keep default models realistic for 16 GB RAM
-- Allow higher-memory profile for stronger machines
-
-### 25.2 Background Processing
-- All heavy jobs must run off main UI thread
-- Use job queue with progress updates
-- App must remain usable during processing
-
-### 25.3 Caching
-Cache:
-- transcriptions
-- alignments
-- diarization
-- summaries
-- translations
-- embeddings
-
-### 25.4 Regeneration Efficiency
-When transcript corrections change:
-- rerun only downstream dependent stages
-- do not force a full re-transcription unless explicitly requested
-
----
-
-## 26. Security and Privacy Requirements
-
-### 26.1 Default Privacy Mode
-Everything local by default.
-
-### 26.2 Data Storage Rules
-- raw audio local
-- transcript local
-- embeddings local
-- summaries local
-- no cloud upload unless future user explicitly enables it
-
-### 26.3 Permission Handling
-The app must ask explicitly for:
-- microphone access
-- screen/audio capture access
-- calendar access
-
-### 26.4 Sensitive Content Controls
-Allow user to:
-- delete raw audio
-- keep transcript but remove audio
-- redact segments
-- exclude meeting from semantic index
-- disable automatic calendar suggestion for selected meetings
-
-### 26.5 Future-Proofing
-Architect code so cloud connectors can be added later, but keep them disabled and absent from MVP UX.
-
----
-
-## 27. Error Handling Requirements
-
-### 27.1 Required Error States
-- microphone permission denied
-- system audio capture unavailable
-- recording write failure
-- transcription failure
-- alignment failure
-- diarization failure
-- translation failure
-- local model load failure
-- calendar permission denied
-- calendar event create failure
-
-### 27.2 UX Rules
-- explicit error message
-- retry action where possible
-- raw meeting data must not be lost if later stages fail
-
----
-
-## 28. Testing Requirements
-
-### 28.1 Unit Tests
-Test:
-- transcript merge logic
-- glossary replacement logic
-- date/time extraction
-- calendar event candidate generation
-- segment-to-speaker matching
-- pipeline status transitions
-
-### 28.2 Integration Tests
-Test:
-- record → transcribe → summarize
-- import audio → transcribe → translate
-- transcript correction → regenerate outputs
-- event extraction → calendar creation
-
-### 28.3 Real-World Test Dataset
-Create a local test corpus covering:
-- English-only meeting
-- Nepali-only recording
-- mixed English-Nepali discussion
-- overlapping speech
-- noisy environment
-- low-volume microphone capture
-- code-switching technical conversation
-
-### 28.4 Acceptance Benchmarks
-The app should be considered MVP-ready if it can:
-- process 30-minute meetings reliably
-- produce usable transcript and summary
-- create a suggested calendar event from explicit future commitments
-- support transcript correction and re-generation
-- preserve all outputs locally
-
----
-
-## 29. Build Phases
-
-### Phase 1 — Core Proof of Concept
-Goal:
-- process imported audio file end-to-end
-
-Deliver:
-- imported audio
-- transcript
-- diarization
-- summary
-- translation
-- local storage
-
-### Phase 2 — Native Recording App
-Goal:
-- add live recording via native Mac UI
-
-Deliver:
-- record start/stop
-- system/mic capture
-- meeting folder creation
-- processing job queue
-
-### Phase 3 — Rich Meeting Viewer
-Goal:
-- make the result usable
-
-Deliver:
-- transcript editor
-- summary tabs
-- outputs screen
-- playback + timestamps
-
-### Phase 4 — Search and Chat
-Goal:
-- turn meetings into memory
-
-Deliver:
-- semantic search
-- citations
-- question answering
-
-### Phase 5 — Calendar Automation
-Goal:
-- convert future commitments into calendar actions
-
-Deliver:
-- event extraction
-- review sheet
-- EventKit create flow
-
-### Phase 6 — Polish
-Goal:
-- make it feel production-grade
-
-Deliver:
-- better settings
-- glossary editor
-- retries
-- exports
-- queue robustness
-- onboarding
-
----
-
-## 30. Prompting / Output Templates
-
-The app must ship with editable local prompt templates for each output type.
-
-### 30.1 Default Summary Prompt
-Generate a structured summary of the meeting using only information present in the transcript. Include:
-- concise overview
-- key discussion points
+### 18.5 Summary tab
+Must expose:
+- concise
+- detailed
+- bullet
 - action items
 - decisions
 - unresolved questions
+- follow-up email
 
-### 30.2 Action Items Prompt
-Extract action items. For each item, include:
-- task
-- likely owner
-- due date if inferable
-- confidence
-- supporting quote or timestamp
-
-### 30.3 Calendar Event Prompt
-Identify any future meeting, deadline, or appointment that should become a calendar event. Return:
-- title
-- start time
-- end time or suggested duration
-- rationale
-- confidence
-- relevant transcript citation
-
-### 30.4 Translation Prompt
-Translate the content while preserving:
-- names
-- titles
-- company names
-- acronyms
-- technical terms
-Use glossary rules where provided.
+### 18.6 Calendar tab
+Shows extracted event candidates for manual review and Apple Calendar creation.
 
 ---
 
-## 31. Calendar Intelligence Rules
+## 19. Security and Privacy
 
-### 31.1 What Counts as a Calendar Candidate
-The app should suggest calendar events when the transcript contains:
-- explicit meeting scheduling
-- explicit deadlines with date/time
-- follow-up appointments
-- reminders tied to a concrete date/time
-
-### 31.2 What Does Not Count Automatically
-Do not auto-create events for:
-- vague intentions
-- non-time-bound suggestions
-- “we should catch up sometime”
-- low-confidence references
-
-### 31.3 Confidence Thresholds
-Event suggestion objects should include confidence score.
-Only auto-suggest UI if above threshold.
-Default: suggest but require review.
+- all data local by default
+- no telemetry in MVP
+- no cloud egress in MVP
+- permissions requested only when needed
+- Keychain used for future secrets
+- delete flows must truly remove local content
+- Spotlight indexing not part of MVP
 
 ---
 
-## 32. Optional Post-MVP Features (Do Not Block MVP)
+## 20. Performance Bands
 
-- menu bar mini-recorder
-- automatic meeting title inference from calendar
-- participant voice profile matching
-- offline sync across multiple Macs
-- Apple Reminders integration
-- auto-tagging
-- sentiment / tone analysis
-- organization of people / projects across meetings
-- screenshot capture during calls
-- import Zoom / Teams local recordings automatically
+These are bands, not rigid promises.
 
----
+| Scenario | Minimum Acceptable | Target | Stretch Target |
+|---|---:|---:|---:|
+| Cold app launch | < 3.0 s | < 1.5 s | < 1.0 s |
+| Recording start | < 1.5 s | < 0.8 s | < 0.5 s |
+| 30-min English meeting → transcript + summary | < 12 min | < 5 min | < 3 min |
+| 30-min mixed NE-EN meeting → transcript + summary | < 18 min | < 8 min | < 5 min |
+| 4-hour class meeting → full processing | < 120 min | < 60 min | < 45 min |
+| FTS search latency | < 300 ms | < 100 ms | < 50 ms |
 
-## 33. Important Product Decisions
-
-### Decision 1
-This must be a **native macOS app**, not Electron/Tauri, because:
-- Apple Silicon is a first-class target
-- we need strong native integration
-- ScreenCaptureKit + EventKit + system permissions are smoother in a native app
-
-### Decision 2
-Use **SwiftUI + AppKit bridge**, not AppKit-only:
-- SwiftUI for velocity and modern UI
-- AppKit only where necessary
-
-### Decision 3
-Use **Python worker** for ML pipeline:
-- far better open-source ecosystem
-- easiest for autonomous coding agents to implement robustly
-
-### Decision 4
-Use **local-first storage and local inference**
-- privacy
-- cost control
-- aligns with free-first objective
-
-### Decision 5
-Calendar sync must be **user-confirmed by default**
-- safer
-- avoids bad auto-created events
-- more privacy-conscious
+### Why this matters
+A coding agent must be allowed to stop once the system is functionally correct and within an acceptable band. Hard mathematical promises encourage destructive optimisation loops.
 
 ---
 
-## 34. Codex / Claude Build Instructions
+## 21. Testing Strategy
 
-The coding agent must follow these rules:
+### 21.1 Unit tests
+- glossary replacement
+- language tagging behaviour
+- transcript correction locking
+- calendar candidate extraction
+- checkpoint logic
+- MemoryManager lifecycle transitions
 
-1. Build the project in phases
-2. Do not skip the proof-of-concept pipeline
-3. Implement the native macOS host app in Swift / SwiftUI
-4. Implement the ML worker in Python
-5. Use ScreenCaptureKit, AVFoundation, and EventKit natively
-6. Use SQLite for storage
-7. Use faster-whisper for base STT
-8. Use WhisperX for alignment
-9. Use pyannote.audio for diarization
-10. Use NLLB for translation
-11. Use MLX / MLX-LM for local generation where feasible
-12. Store all intermediate artifacts
-13. Make every pipeline stage resumable
-14. Build transcript correction before investing in excessive summary complexity
-15. Default all privacy-sensitive behavior to local-only and opt-in
+### 21.2 Integration tests
+- import → transcribe → summarise
+- record → transcribe → summarise
+- crash → relaunch → resume
+- EventKit event creation
+- diarisation worker fail → core app still succeeds
 
----
-
-## 35. Minimum Deliverables for First Working Version
-
-A version is considered “working” when it can:
-- record a meeting locally on macOS
-- store the audio
-- transcribe English and Nepali speech locally
-- assign approximate speaker labels
-- display transcript with timestamps
-- generate summary and action items
-- translate summary between English and Nepali
-- suggest a calendar event from explicit future commitments
-- create that event in Apple Calendar after confirmation
-- search across processed meetings locally
+### 21.3 Benchmark corpus
+Must include:
+- English-only
+- Nepali-only
+- mixed English-Nepali
+- overlapping speech
+- noisy clip
+- low-volume clip
+- technical vocabulary clip
+- long class session
 
 ---
 
-## 36. Known Risks and Mitigations
+## 22. Packaging, Signing, and Notarisation
 
-### Risk 1 — System audio capture complexity
-Mitigation:
-- support manual import immediately
-- implement robust permission messaging
-- separate recording engine from transcription engine
+- signed, hardened, notarised `.app`
+- model files downloaded after install with consent
+- no bloated bundled models unless necessary
+- embedded Python worker carefully signed only if retained
+- all embedded dylibs inside the worker must be signed correctly
 
-### Risk 2 — Nepali transcription quality
-Mitigation:
+### Highest release risk
+The Python worker remains the highest packaging and Gatekeeper risk.
+
+The app must remain shippable without it.
+
+---
+
+## 23. Development Roadmap
+
+### Phase 0 — Skeleton
+- project scaffolding
+- storage layer
+- migrations
+- permission flows
+- settings shell
+
+### Phase 1 — Local import proof
+- import audio/video
+- transcription
+- local summarisation
+- transcript viewer
+- transcript correction
 - glossary
-- correction UI
-- mixed-language setting
-- transcript regeneration pipeline
+- translation of outputs
 
-### Risk 3 — Speaker diarization errors
-Mitigation:
-- keep raw diarization editable
-- allow manual speaker rename
-- keep transcript correction layer independent
+### Phase 2 — Native recording
+- microphone + system audio recording
+- disk-streamed write
+- checkpoints
+- 4-hour path
+- thermal and power handling
 
-### Risk 4 — Local model memory limits
-Mitigation:
-- provide model tiers
-- default to realistic local models for 16 GB machines
-- avoid requiring giant models in MVP
+### Phase 3 — Meeting detail completion
+- outputs view
+- Apple Calendar suggestions + manual creation
+- FTS search
+- strong local UX loop
 
-### Risk 5 — False calendar extraction
-Mitigation:
-- confirmation UI
-- confidence thresholds
-- transcript citations in suggestion sheet
+### Phase 4 — Optional diarisation
+- Python worker
+- pyannote integration
+- graceful fallback behaviour
 
----
-
-## 37. Final Implementation Priority Order
-
-Build in this order:
-
-1. Audio import
-2. Transcription
-3. Alignment
-4. Diarization
-5. Summary generation
-6. Translation
-7. Native recording
-8. Transcript editing
-9. Search/chat
-10. Calendar suggestion and EventKit creation
-11. UX polish
-
-This order matters. Do not begin with UI polish or advanced automation before the core pipeline is trustworthy.
+### Post-MVP phases
+- Google Drive
+- Google Calendar
+- semantic search
+- meeting chat
+- cloud adapters
+- live-caption HUD
+- menu bar app
+- Shortcuts
+- Spotlight
+- URL scheme
+- exports
 
 ---
 
-## 38. Final Notes
+## 24. Project Structure
 
-This project must be built as a **serious local productivity tool**, not as a demo.
+```text
+Varta/
+├── Varta.xcworkspace
+├── App/
+├── Features/
+│   ├── Home/
+│   ├── Recording/
+│   ├── MeetingDetail/
+│   │   ├── Summary/
+│   │   ├── Transcript/
+│   │   ├── Translation/
+│   │   ├── Outputs/
+│   │   └── Calendar/
+│   ├── Search/
+│   └── Settings/
+├── Services/
+│   ├── Recording/
+│   ├── Transcription/
+│   ├── Summarisation/
+│   ├── Translation/
+│   ├── Calendar/
+│   ├── Storage/
+│   ├── Jobs/
+│   ├── Memory/
+│   └── System/
+├── Worker/
+│   └── varta-worker/
+├── Native/
+│   └── whisper-cpp.xcframework
+├── Models/
+├── Resources/
+│   └── Prompts/
+├── Tests/
+└── docs/
+```
 
-The priority is:
-- reliability
-- privacy
-- transcript usefulness
-- Nepali support
-- practical outputs
-- native Mac experience
-
-A correct version of this product is better than a flashy one.
-
-The app should feel:
-- clean
-- calm
-- efficient
-- private
-- Apple-native
-- trustworthy
-
-If tradeoffs arise, choose:
-1. correctness
-2. privacy
-3. usability
-4. speed
-5. convenience
-
-in that order.
+Post-MVP folders for cloud, embeddings, chat, Drive, Google Calendar, HUD, and menu bar utility should not distract the MVP repo layout.
 
 ---
+
+## 25. Prompt Templates (defaults)
+
+The app must ship editable prompt files for:
+- window summary
+- section synthesis
+- final summary
+- action items
+- decisions
+- unresolved questions
+- follow-up email
+- calendar candidates
+- translation
+
+These prompt files should be copied to Application Support on first launch and remain user-editable.
+
+---
+
+## 26. Build Instructions for the Coding Agent
+
+The coding agent must follow this order:
+
+1. Initialise the Xcode project and strict concurrency.
+2. Build the storage layer first.
+3. Implement permissions and onboarding.
+4. Integrate whisper.cpp.
+5. Implement MLX Swift LM summarisation.
+6. Build the import path end to end.
+7. Build transcript review and correction.
+8. Build native recording path.
+9. Build 4-hour checkpoint and resume handling.
+10. Build Apple Calendar suggestion + manual create.
+11. Build FTS keyword search.
+12. Only then attempt optional diarisation worker.
+13. Stop. Do not build post-MVP features in the first autonomous pass.
+
+### Hard instruction
+The agent must not jump to Google integrations, semantic search, chat, or cloud APIs before the local loop is stable.
+
+---
+
+## 27. Decisions Log (v3)
+
+| # | Decision | Rationale |
+|---|---|---|
+| D1 | Native Swift/SwiftUI/AppKit | Correct for Apple Silicon macOS app |
+| D2 | whisper.cpp over Python ASR | Native Metal path, less packaging burden |
+| D3 | MLX Swift LM with Llama 3.1 8B default | Strong local reasoning-to-RAM balance |
+| D4 | Deniable Python surface | Keep Python isolated and optional |
+| D5 | Diarisation is a soft dependency | Worker failure must not poison the whole app |
+| D6 | Hierarchical Map-Reduce by default | Memory-safe and resumable |
+| D7 | Apple Calendar only in MVP | Stronger focus, less OAuth complexity |
+| D8 | Google integrations moved post-MVP | Prevent cross-domain scope drift |
+| D9 | Keyword FTS only in MVP | Semantic retrieval is later |
+| D10 | HUD off by default | Reduce clutter and complexity |
+| D11 | Review always for event creation | Protect calendar integrity |
+| D12 | Manual Drive upload default | Intentional archiving, not automatic leakage |
+| D13 | Menu bar app deferred | Avoid state-sync complexity in MVP |
+| D14 | Performance uses bands | Prevent destructive optimisation loops |
+| D15 | ScreenCaptureKit permission must be explained | Product trust requirement |
+
+---
+
+## 28. Known Risks and Mitigations (v3)
+
+| Risk | Likelihood | Impact | Mitigation |
+|---|---|---|---|
+| ScreenCaptureKit permission feels invasive | High | Medium | Explain clearly in onboarding and settings |
+| Python worker packaging breaks notarisation | Medium | High | Ship MVP without diarisation if needed |
+| Mixed Nepali-English ASR quality is weaker than expected | High | Medium | Use glossary, correction UI, conservative decoding |
+| Long-audio processing overheats the machine | High | Medium | Yielding, phase separation, thermal hooks |
+| Agent scope drift into post-MVP features | High | High | Freeze MVP boundary explicitly |
+| Calendar candidate extraction can be wrong | Medium | Medium | Review always |
+| Over-optimisation loops from hard benchmarks | Medium | High | Use minimum/target/stretch bands |
+
+---
+
+## 29. Open Questions Resolved
+
+These are now closed for v3.
+
+| Decision | Final Answer |
+|---|---|
+| Default local LLM | **Llama 3.1 8B** |
+| HUD default | **Off** |
+| Auto-event mode | **Review always** |
+| Drive upload default | **Manual trigger** |
+| Menu bar app | **Defer to v2/post-MVP** |
+| Icon style | **Minimalist glyph** |
+
+---
+
+## 30. Final Notes
+
+This is a serious personal productivity tool, not a demo. It must feel native, trustworthy, and calm.
+
+The mainline path must work perfectly with:
+- all cloud providers absent,
+- all connectors absent,
+- and diarisation unavailable.
+
+The 4-hour class scenario remains a first-class test case, but the app is no longer forced into unrealistic benchmark absolutism.
+
+If tradeoffs surface during implementation, choose in this order:
+
+1. correctness  
+2. privacy  
+3. usability  
+4. reliability  
+5. speed  
+6. convenience  
+
+**End of document.**

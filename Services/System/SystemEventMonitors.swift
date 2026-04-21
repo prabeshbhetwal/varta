@@ -7,7 +7,7 @@ struct PowerSnapshot: Sendable {
     let sourceName: String
 }
 
-final class ThermalStateMonitor {
+final class ThermalStateMonitor: NSObject {
     var onChange: ((ProcessInfo.ThermalState) -> Void)?
 
     private var observer: NSObjectProtocol?
@@ -18,14 +18,13 @@ final class ThermalStateMonitor {
 
     func start() {
         stop()
-        observer = NotificationCenter.default.addObserver(
-            forName: ProcessInfo.thermalStateDidChangeNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            guard let self else { return }
-            self.onChange?(ProcessInfo.processInfo.thermalState)
-        }
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleThermalStateDidChange),
+            name: ProcessInfo.thermalStateDidChangeNotification,
+            object: nil
+        )
+        observer = self
 
         onChange?(ProcessInfo.processInfo.thermalState)
     }
@@ -36,13 +35,18 @@ final class ThermalStateMonitor {
             self.observer = nil
         }
     }
+
+    @objc
+    private func handleThermalStateDidChange() {
+        onChange?(ProcessInfo.processInfo.thermalState)
+    }
 }
 
-final class PowerStateMonitor {
+final class PowerStateMonitor: NSObject {
     var onChange: ((PowerSnapshot) -> Void)?
 
     private var observer: NSObjectProtocol?
-    private var pollTask: Task<Void, Never>?
+    private var pollTimer: Timer?
 
     deinit {
         stop()
@@ -52,34 +56,46 @@ final class PowerStateMonitor {
         stop()
 
         if #available(macOS 12.0, *) {
-            observer = NotificationCenter.default.addObserver(
-                forName: Notification.Name.NSProcessInfoPowerStateDidChange,
-                object: nil,
-                queue: .main
-            ) { [weak self] _ in
-                guard let self else { return }
-                self.publishCurrent()
-            }
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handlePowerStateDidChange),
+                name: Notification.Name.NSProcessInfoPowerStateDidChange,
+                object: nil
+            )
+            observer = self
         }
 
-        pollTask = Task { [weak self] in
-            while !Task.isCancelled {
-                self?.publishCurrent()
-                try? await Task.sleep(nanoseconds: 30_000_000_000)
-            }
-        }
+        let timer = Timer(
+            timeInterval: 30,
+            target: self,
+            selector: #selector(handlePollingTimer),
+            userInfo: nil,
+            repeats: true
+        )
+        RunLoop.main.add(timer, forMode: .common)
+        pollTimer = timer
 
         publishCurrent()
     }
 
     func stop() {
-        pollTask?.cancel()
-        pollTask = nil
+        pollTimer?.invalidate()
+        pollTimer = nil
 
         if let observer {
             NotificationCenter.default.removeObserver(observer)
             self.observer = nil
         }
+    }
+
+    @objc
+    private func handlePowerStateDidChange() {
+        publishCurrent()
+    }
+
+    @objc
+    private func handlePollingTimer() {
+        publishCurrent()
     }
 
     private func publishCurrent() {
@@ -101,7 +117,7 @@ final class PowerStateMonitor {
     }
 }
 
-final class SleepWakeMonitor {
+final class SleepWakeMonitor: NSObject {
     var onWillSleep: (() -> Void)?
     var onDidWake: (() -> Void)?
 
@@ -116,23 +132,21 @@ final class SleepWakeMonitor {
         stop()
 
         let center = NSWorkspace.shared.notificationCenter
-        willSleepObserver = center.addObserver(
-            forName: NSWorkspace.willSleepNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            guard let self else { return }
-            self.onWillSleep?()
-        }
+        center.addObserver(
+            self,
+            selector: #selector(handleWillSleep),
+            name: NSWorkspace.willSleepNotification,
+            object: nil
+        )
+        willSleepObserver = self
 
-        didWakeObserver = center.addObserver(
-            forName: NSWorkspace.didWakeNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            guard let self else { return }
-            self.onDidWake?()
-        }
+        center.addObserver(
+            self,
+            selector: #selector(handleDidWake),
+            name: NSWorkspace.didWakeNotification,
+            object: nil
+        )
+        didWakeObserver = self
     }
 
     func stop() {
@@ -147,5 +161,15 @@ final class SleepWakeMonitor {
             center.removeObserver(didWakeObserver)
             self.didWakeObserver = nil
         }
+    }
+
+    @objc
+    private func handleWillSleep() {
+        onWillSleep?()
+    }
+
+    @objc
+    private func handleDidWake() {
+        onDidWake?()
     }
 }

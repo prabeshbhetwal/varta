@@ -15,7 +15,7 @@
             buildForAnalyzing = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "1A2B3C4D5E6F700000000011"
+               BlueprintIdentifier = "TG5010000000000000000000"
                BuildableName = "VartaTests.xctest"
                BlueprintName = "VartaTests"
                ReferencedContainer = "container:Varta.xcodeproj">
@@ -35,7 +35,7 @@
             parallelizable = "YES">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "1A2B3C4D5E6F700000000011"
+               BlueprintIdentifier = "TG5010000000000000000000"
                BuildableName = "VartaTests.xctest"
                BlueprintName = "VartaTests"
                ReferencedContainer = "container:Varta.xcodeproj">

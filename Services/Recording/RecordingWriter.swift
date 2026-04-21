@@ -1,4 +1,4 @@
-import AVFoundation
+@preconcurrency import AVFoundation
 import Foundation
 
 final class RecordingWriter: @unchecked Sendable {
@@ -113,17 +113,24 @@ final class RecordingWriter: @unchecked Sendable {
                 }
 
                 audioInput.markAsFinished()
-                writer.finishWriting {
-                    if writer.status == .completed {
+                writer.finishWriting { [weak self] in
+                    guard let self else {
+                        continuation.resume(returning: 0)
+                        return
+                    }
+
+                    let status = self.writer?.status ?? .unknown
+                    let errorDescription = self.writer?.error?.localizedDescription ?? "unknown"
+                    self.writer = nil
+                    self.audioInput = nil
+
+                    if status == .completed {
                         let duration = CMTimeGetSeconds(self.lastPTS)
                         continuation.resume(returning: max(duration, 0))
                     } else {
-                        continuation.resume(throwing: WriterError.failedToFinishWriting(writer.error?.localizedDescription ?? "unknown"))
+                        continuation.resume(throwing: WriterError.failedToFinishWriting(errorDescription))
                     }
                 }
-
-                self.writer = nil
-                self.audioInput = nil
             }
         }
     }

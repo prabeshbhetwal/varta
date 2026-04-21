@@ -26,12 +26,17 @@ actor RecorderCoordinator {
         case wake
     }
 
+    private enum AudioSource: String, Sendable {
+        case microphone
+        case system
+    }
+
     private let storageService: StorageService
     private let jobQueue: JobQueue
     private let checkpointer: Checkpointer
     private let memoryManager: MemoryManager
 
-    private var writer: RecordingWriter?
+    private var writersBySource: [AudioSource: RecordingWriter] = [:]
     private var microphoneCapture: MicrophoneCapture?
     private var systemAudioCapture: SystemAudioCapture?
 
@@ -43,6 +48,9 @@ actor RecorderCoordinator {
     private var activeSession: ActiveSession?
     private var checkpointTask: Task<Void, Never>?
     private var resumeIntent: ResumeIntent = .none
+    private var isHandlingWriterFailure = false
+    private var hasLoggedFormatMismatch = false
+    private var hasLoggedInvalidBuffer = false
 
     init(
         storageService: StorageService,
@@ -98,6 +106,9 @@ actor RecorderCoordinator {
             currentSegmentIndex: 0,
             currentSegmentStartedAt: nil
         )
+        isHandlingWriterFailure = false
+        hasLoggedFormatMismatch = false
+        hasLoggedInvalidBuffer = false
 
         do {
             try await startNewSegment(captureMicrophone: configuration.captureMicrophone, captureSystemAudio: configuration.captureSystemAudio)
@@ -177,6 +188,9 @@ actor RecorderCoordinator {
 
         state = .idle
         note = nil
+        isHandlingWriterFailure = false
+        hasLoggedFormatMismatch = false
+        hasLoggedInvalidBuffer = false
         self.activeSession = nil
     }
 
@@ -233,30 +247,37 @@ actor RecorderCoordinator {
             throw RecorderError.noCoordinatorState
         }
 
-        let writer = RecordingWriter()
         let segmentIndex = activeSession.currentSegmentIndex
-
-        let destination = try await makeRecordingFileURL(meetingID: activeSession.meetingID, segmentIndex: segmentIndex)
-        try writer.startWriting(to: destination)
 
         var micCapture: AVFoundationMicrophoneCapture?
         var systemCapture: ScreenCaptureSystemAudioCapture?
-        let appendSample: @Sendable (CMSampleBuffer) -> Void = { [weak self, writer] sampleBuffer in
-            do {
-                try writer.append(sampleBuffer: sampleBuffer)
-            } catch RecordingWriter.WriterError.inputNotReady {
-                // Drop-only strategy bounds memory while keeping stream alive.
-            } catch {
-                Task {
-                    await self?.handleWriterFailure(errorDescription: error.localizedDescription)
-                }
-            }
-        }
+        var localWriters: [AudioSource: RecordingWriter] = [:]
 
         do {
             if captureMicrophone {
+                let micWriter = RecordingWriter()
+                let micDestination = try await makeRecordingFileURL(
+                    meetingID: activeSession.meetingID,
+                    segmentIndex: segmentIndex,
+                    source: .microphone
+                )
+                try micWriter.startWriting(to: micDestination)
+                localWriters[.microphone] = micWriter
+
                 let mic = AVFoundationMicrophoneCapture()
-                mic.onSampleBuffer = appendSample
+                mic.onSampleBuffer = { [weak self, micWriter] sampleBuffer in
+                    do {
+                        try micWriter.append(sampleBuffer: sampleBuffer)
+                    } catch RecordingWriter.WriterError.inputNotReady {
+                        // Backpressure drop keeps in-memory usage bounded.
+                    } catch RecordingWriter.WriterError.incompatibleAudioFormat {
+                        Task { await self?.handleIncompatibleAudioFormat(for: .microphone) }
+                    } catch RecordingWriter.WriterError.invalidSampleBuffer {
+                        Task { await self?.handleInvalidSampleBuffer(for: .microphone) }
+                    } catch {
+                        Task { await self?.handleWriterFailure(errorDescription: "[microphone] \(error.localizedDescription)") }
+                    }
+                }
 
                 try await mic.start()
                 micCapture = mic
@@ -271,8 +292,29 @@ actor RecorderCoordinator {
                     )
                 }
 
+                let systemWriter = RecordingWriter()
+                let systemDestination = try await makeRecordingFileURL(
+                    meetingID: activeSession.meetingID,
+                    segmentIndex: segmentIndex,
+                    source: .system
+                )
+                try systemWriter.startWriting(to: systemDestination)
+                localWriters[.system] = systemWriter
+
                 let system = ScreenCaptureSystemAudioCapture()
-                system.onSampleBuffer = appendSample
+                system.onSampleBuffer = { [weak self, systemWriter] sampleBuffer in
+                    do {
+                        try systemWriter.append(sampleBuffer: sampleBuffer)
+                    } catch RecordingWriter.WriterError.inputNotReady {
+                        // Backpressure drop keeps in-memory usage bounded.
+                    } catch RecordingWriter.WriterError.incompatibleAudioFormat {
+                        Task { await self?.handleIncompatibleAudioFormat(for: .system) }
+                    } catch RecordingWriter.WriterError.invalidSampleBuffer {
+                        Task { await self?.handleInvalidSampleBuffer(for: .system) }
+                    } catch {
+                        Task { await self?.handleWriterFailure(errorDescription: "[system] \(error.localizedDescription)") }
+                    }
+                }
 
                 try await system.start()
                 systemCapture = system
@@ -284,15 +326,17 @@ actor RecorderCoordinator {
             if let systemCapture {
                 await systemCapture.stop()
             }
-            do {
-                _ = try await writer.finishWriting()
-            } catch {
-                // Best-effort cleanup for partially started segment.
+            for (_, localWriter) in localWriters {
+                do {
+                    _ = try await localWriter.finishWriting()
+                } catch {
+                    // Best-effort cleanup for partially started segment.
+                }
             }
             throw error
         }
 
-        self.writer = writer
+        self.writersBySource = localWriters
         microphoneCapture = micCapture
         systemAudioCapture = systemCapture
 
@@ -305,6 +349,14 @@ actor RecorderCoordinator {
         guard state == .recording || state == .starting else {
             return
         }
+        guard !isHandlingWriterFailure else {
+            return
+        }
+        isHandlingWriterFailure = true
+
+        state = .failed
+        checkpointTask?.cancel()
+        checkpointTask = nil
 
         await stopInputsAndCloseWriter()
         await saveCheckpoint(reason: .failure)
@@ -312,7 +364,24 @@ actor RecorderCoordinator {
         if let jobID = activeSession?.jobID {
             try? await jobQueue.failRecordingJob(jobID: jobID, errorMessage: errorDescription)
         }
-        state = .failed
+        isHandlingWriterFailure = false
+    }
+
+    private func handleIncompatibleAudioFormat(for source: AudioSource) async {
+        guard !hasLoggedFormatMismatch else {
+            return
+        }
+
+        hasLoggedFormatMismatch = true
+        note = "[\(source.rawValue)] Audio format mismatch detected; dropping mismatched buffers."
+    }
+
+    private func handleInvalidSampleBuffer(for source: AudioSource) async {
+        guard !hasLoggedInvalidBuffer else {
+            return
+        }
+        hasLoggedInvalidBuffer = true
+        note = "[\(source.rawValue)] Capture produced an invalid sample buffer; continuing."
     }
 
     private func stopInputsAndCloseWriter() async {
@@ -321,35 +390,48 @@ actor RecorderCoordinator {
         microphoneCapture = nil
         systemAudioCapture = nil
 
-        guard let writer else {
+        guard !writersBySource.isEmpty else {
+            return
+        }
+        guard let meetingID = activeSession?.meetingID else {
+            writersBySource = [:]
             return
         }
 
-        do {
-            let segmentDuration = try await writer.finishWriting()
-            if var activeSession, let outputURL = writer.outputURL {
-                activeSession.totalRecordedSeconds += segmentDuration
-                activeSession.currentSegmentStartedAt = nil
+        var maxSegmentDuration: Double = 0
+        var registeredPaths: [String] = []
 
-                let appSupport = await storageService.appSupportDirectory()
-                let relativePath = outputURL.path.replacingOccurrences(of: appSupport.path + "/", with: "")
-                activeSession.segmentRelativePaths.append(relativePath)
+        for (_, writer) in writersBySource {
+            do {
+                let segmentDuration = try await writer.finishWriting()
+                maxSegmentDuration = max(maxSegmentDuration, segmentDuration)
 
-                try? await storageService.registerImportedMedia(
-                    meetingID: activeSession.meetingID,
-                    relativePath: relativePath,
-                    originalFilename: outputURL.lastPathComponent,
-                    format: "m4a",
-                    durationSeconds: segmentDuration
-                )
+                if let outputURL = writer.outputURL {
+                    let appSupport = await storageService.appSupportDirectory()
+                    let relativePath = outputURL.path.replacingOccurrences(of: appSupport.path + "/", with: "")
+                    registeredPaths.append(relativePath)
 
-                self.activeSession = activeSession
+                    try? await storageService.registerImportedMedia(
+                        meetingID: meetingID,
+                        relativePath: relativePath,
+                        originalFilename: outputURL.lastPathComponent,
+                        format: "m4a",
+                        durationSeconds: segmentDuration
+                    )
+                }
+            } catch {
+                note = "Failed to finalize writer: \(error.localizedDescription)"
             }
-        } catch {
-            note = "Failed to finalize writer: \(error.localizedDescription)"
         }
 
-        self.writer = nil
+        if var activeSession {
+            activeSession.totalRecordedSeconds += maxSegmentDuration
+            activeSession.currentSegmentStartedAt = nil
+            activeSession.segmentRelativePaths.append(contentsOf: registeredPaths)
+            self.activeSession = activeSession
+        }
+
+        self.writersBySource = [:]
     }
 
     private func startCheckpointLoop() {
@@ -386,7 +468,7 @@ actor RecorderCoordinator {
         try? await checkpointer.saveRecordingCheckpoint(jobID: activeSession.jobID, payload: payload)
     }
 
-    private func makeRecordingFileURL(meetingID: String, segmentIndex: Int) async throws -> URL {
+    private func makeRecordingFileURL(meetingID: String, segmentIndex: Int, source: AudioSource) async throws -> URL {
         let appSupport = await storageService.appSupportDirectory()
         let folder = appSupport
             .appendingPathComponent("Recordings", isDirectory: true)
@@ -397,7 +479,7 @@ actor RecorderCoordinator {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyyMMdd-HHmmss"
         let stamp = formatter.string(from: Date())
-        let fileName = "segment-\(segmentIndex)-\(stamp).m4a"
+        let fileName = "segment-\(segmentIndex)-\(source.rawValue)-\(stamp).m4a"
         return folder.appendingPathComponent(fileName)
     }
 

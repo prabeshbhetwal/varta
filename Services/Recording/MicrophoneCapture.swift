@@ -40,6 +40,14 @@ final class AVFoundationMicrophoneCapture: NSObject, MicrophoneCapture, AVCaptur
         }
 
         let output = AVCaptureAudioDataOutput()
+        output.audioSettings = [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: 48_000,
+            AVNumberOfChannelsKey: 2,
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMIsNonInterleaved: false,
+        ]
         output.setSampleBufferDelegate(self, queue: outputQueue)
         guard session.canAddOutput(output) else {
             throw NSError(domain: "Varta.Microphone", code: 1103, userInfo: [NSLocalizedDescriptionKey: "Cannot attach microphone output"])

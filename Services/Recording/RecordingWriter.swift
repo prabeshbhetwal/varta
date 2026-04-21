@@ -8,56 +8,50 @@ final class RecordingWriter: @unchecked Sendable {
         case failedToStartWriter
         case failedToFinishWriting(String)
         case invalidSampleBuffer
+        case incompatibleAudioFormat
+    }
+
+    private struct AudioFormatSignature: Equatable {
+        let formatID: UInt32
+        let formatFlags: UInt32
+        let sampleRate: Float64
+        let channels: UInt32
+        let bitsPerChannel: UInt32
+        let bytesPerFrame: UInt32
+        let framesPerPacket: UInt32
     }
 
     private let queue = DispatchQueue(label: "com.varta.recording.writer", qos: .userInitiated)
     private var writer: AVAssetWriter?
     private var audioInput: AVAssetWriterInput?
-    private var startUptimeNanos: UInt64 = 0
+    private var firstPTS: CMTime = .invalid
     private var lastPTS: CMTime = .zero
+    private var hasStartedSession = false
+    private var expectedFormat: AudioFormatSignature?
 
     private(set) var outputURL: URL?
 
     func startWriting(to outputURL: URL) throws {
         self.outputURL = outputURL
-        startUptimeNanos = DispatchTime.now().uptimeNanoseconds
+        firstPTS = .invalid
         lastPTS = .zero
-
-        let writer = try AVAssetWriter(outputURL: outputURL, fileType: .m4a)
-        let outputSettings: [String: Any] = [
-            AVFormatIDKey: kAudioFormatMPEG4AAC,
-            AVSampleRateKey: 48_000,
-            AVNumberOfChannelsKey: 2,
-            AVEncoderBitRateKey: 128_000,
-        ]
-
-        let input = AVAssetWriterInput(mediaType: .audio, outputSettings: outputSettings)
-        input.expectsMediaDataInRealTime = true
-
-        guard writer.canAdd(input) else {
-            throw WriterError.failedToCreateWriter
-        }
-
-        writer.add(input)
-        guard writer.startWriting() else {
-            throw WriterError.failedToStartWriter
-        }
-
-        writer.startSession(atSourceTime: .zero)
-        self.writer = writer
-        self.audioInput = input
+        hasStartedSession = false
+        expectedFormat = nil
+        audioInput = nil
+        writer = try AVAssetWriter(outputURL: outputURL, fileType: .m4a)
     }
 
     func append(sampleBuffer: CMSampleBuffer) throws {
         try queue.sync {
-            guard let writer, let audioInput else {
+            guard let writer else {
                 throw WriterError.failedToCreateWriter
             }
 
-            guard writer.status == .writing else {
-                if writer.status == .failed {
-                    throw WriterError.failedToFinishWriting(writer.error?.localizedDescription ?? "unknown")
-                }
+            if writer.status == .failed {
+                throw WriterError.failedToFinishWriting(writer.error?.localizedDescription ?? "unknown")
+            }
+
+            guard writer.status == .unknown || writer.status == .writing else {
                 return
             }
 
@@ -65,54 +59,84 @@ final class RecordingWriter: @unchecked Sendable {
                 throw WriterError.invalidSampleBuffer
             }
 
-            if !audioInput.isReadyForMoreMediaData {
-                // Backpressure drop keeps in-memory usage bounded.
-                throw WriterError.inputNotReady
-            }
-
-            let nowNanos = DispatchTime.now().uptimeNanoseconds
-            let elapsedNanos = nowNanos > startUptimeNanos ? nowNanos - startUptimeNanos : 0
-            var presentation = CMTime(value: CMTimeValue(elapsedNanos), timescale: 1_000_000_000)
-
-            if presentation <= lastPTS {
-                presentation = lastPTS + CMTime(value: 1, timescale: 100)
-            }
-            lastPTS = presentation
-
-            var timing = CMSampleTimingInfo(
-                duration: CMSampleBufferGetDuration(sampleBuffer),
-                presentationTimeStamp: presentation,
-                decodeTimeStamp: .invalid
-            )
-
-            var adjusted: CMSampleBuffer?
-            let status = CMSampleBufferCreateCopyWithNewTiming(
-                allocator: kCFAllocatorDefault,
-                sampleBuffer: sampleBuffer,
-                sampleTimingEntryCount: 1,
-                sampleTimingArray: &timing,
-                sampleBufferOut: &adjusted
-            )
-
-            guard status == noErr, let adjusted else {
+            guard let (formatDescription, signature) = audioFormat(from: sampleBuffer) else {
                 throw WriterError.invalidSampleBuffer
             }
 
-            if !audioInput.append(adjusted) {
+            if let expectedFormat {
+                if expectedFormat != signature {
+                    throw WriterError.incompatibleAudioFormat
+                }
+            } else {
+                expectedFormat = signature
+            }
+
+            if audioInput == nil {
+                let outputSettings = aacOutputSettings(from: signature)
+                let input = AVAssetWriterInput(
+                    mediaType: .audio,
+                    outputSettings: outputSettings,
+                    sourceFormatHint: formatDescription
+                )
+                input.expectsMediaDataInRealTime = true
+
+                guard writer.canAdd(input) else {
+                    throw WriterError.failedToCreateWriter
+                }
+
+                writer.add(input)
+                guard writer.startWriting() else {
+                    throw WriterError.failedToStartWriter
+                }
+                audioInput = input
+            }
+
+            guard let audioInput else {
+                throw WriterError.failedToCreateWriter
+            }
+
+            let presentation = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+            guard presentation != .invalid else {
+                throw WriterError.invalidSampleBuffer
+            }
+
+            if !hasStartedSession {
+                writer.startSession(atSourceTime: presentation)
+                hasStartedSession = true
+                firstPTS = presentation
+            }
+
+            if !audioInput.isReadyForMoreMediaData {
+                throw WriterError.inputNotReady
+            }
+
+            if presentation < lastPTS {
+                throw WriterError.inputNotReady
+            }
+
+            if !audioInput.append(sampleBuffer) {
                 throw WriterError.failedToFinishWriting(writer.error?.localizedDescription ?? "append failed")
             }
+
+            lastPTS = presentation
         }
     }
 
     func finishWriting() async throws -> Double {
         try await withCheckedThrowingContinuation { continuation in
             queue.async { [self] in
-                guard let writer = self.writer, let audioInput = self.audioInput else {
+                guard let writer = self.writer else {
                     continuation.resume(returning: 0)
                     return
                 }
 
-                audioInput.markAsFinished()
+                if writer.status == .unknown {
+                    cleanup()
+                    continuation.resume(returning: 0)
+                    return
+                }
+
+                audioInput?.markAsFinished()
                 writer.finishWriting { [weak self] in
                     guard let self else {
                         continuation.resume(returning: 0)
@@ -121,17 +145,82 @@ final class RecordingWriter: @unchecked Sendable {
 
                     let status = self.writer?.status ?? .unknown
                     let errorDescription = self.writer?.error?.localizedDescription ?? "unknown"
-                    self.writer = nil
-                    self.audioInput = nil
+                    let duration: Double
+                    if self.hasStartedSession {
+                        duration = max(CMTimeGetSeconds(self.lastPTS - self.firstPTS), 0)
+                    } else {
+                        duration = 0
+                    }
 
-                    if status == .completed {
-                        let duration = CMTimeGetSeconds(self.lastPTS)
-                        continuation.resume(returning: max(duration, 0))
+                    self.cleanup()
+
+                    if status == .completed || status == .cancelled {
+                        continuation.resume(returning: duration)
                     } else {
                         continuation.resume(throwing: WriterError.failedToFinishWriting(errorDescription))
                     }
                 }
             }
+        }
+    }
+
+    private func audioFormat(from sampleBuffer: CMSampleBuffer) -> (CMFormatDescription, AudioFormatSignature)? {
+        guard let formatDescription = CMSampleBufferGetFormatDescription(sampleBuffer),
+              let basicDescriptionPointer = CMAudioFormatDescriptionGetStreamBasicDescription(formatDescription)
+        else {
+            return nil
+        }
+
+        let asbd = basicDescriptionPointer.pointee
+        let signature = AudioFormatSignature(
+            formatID: asbd.mFormatID,
+            formatFlags: asbd.mFormatFlags,
+            sampleRate: asbd.mSampleRate,
+            channels: asbd.mChannelsPerFrame,
+            bitsPerChannel: asbd.mBitsPerChannel,
+            bytesPerFrame: asbd.mBytesPerFrame,
+            framesPerPacket: asbd.mFramesPerPacket
+        )
+
+        return (formatDescription, signature)
+    }
+
+    private func aacOutputSettings(from signature: AudioFormatSignature) -> [String: Any] {
+        let channelCount = max(Int(signature.channels), 1)
+        let bitRate = max(channelCount * 64_000, 64_000)
+        return [
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVSampleRateKey: signature.sampleRate,
+            AVNumberOfChannelsKey: channelCount,
+            AVEncoderBitRateKey: bitRate,
+        ]
+    }
+
+    private func cleanup() {
+        writer = nil
+        audioInput = nil
+        expectedFormat = nil
+        hasStartedSession = false
+        firstPTS = .invalid
+        lastPTS = .zero
+    }
+}
+
+extension RecordingWriter.WriterError: LocalizedError {
+    var errorDescription: String? {
+        switch self {
+        case .inputNotReady:
+            return "Writer input is temporarily backpressured."
+        case .failedToCreateWriter:
+            return "Failed to create AVAssetWriter input."
+        case .failedToStartWriter:
+            return "Failed to start AVAssetWriter session."
+        case .failedToFinishWriting(let details):
+            return "Failed to finish writing audio: \(details)"
+        case .invalidSampleBuffer:
+            return "Received an invalid audio sample buffer from capture pipeline."
+        case .incompatibleAudioFormat:
+            return "Audio source format changed or mismatched during capture."
         }
     }
 }

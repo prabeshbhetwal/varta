@@ -39,7 +39,7 @@ final class RecordingControlsViewModel: ObservableObject {
             guard let self else { return }
             while !Task.isCancelled {
                 let snapshot = await recorderCoordinator.currentSnapshot()
-                await MainActor.run {
+                if self.snapshot != snapshot {
                     self.snapshot = snapshot
                 }
                 try? await Task.sleep(nanoseconds: 500_000_000)
@@ -55,6 +55,7 @@ final class RecordingControlsViewModel: ObservableObject {
     func startRecording() {
         Task {
             do {
+                errorMessage = nil
                 try await recorderCoordinator.startRecording(
                     configuration: RecorderStartConfiguration(
                         captureMicrophone: captureMicrophone,
@@ -62,7 +63,9 @@ final class RecordingControlsViewModel: ObservableObject {
                     )
                 )
             } catch {
-                errorMessage = error.localizedDescription
+                Task { @MainActor in
+                    self.errorMessage = error.localizedDescription
+                }
             }
         }
     }
@@ -76,12 +79,15 @@ final class RecordingControlsViewModel: ObservableObject {
     func resumeRecording() {
         Task {
             do {
+                errorMessage = nil
                 try await recorderCoordinator.resumeRecording(
                     captureMicrophone: captureMicrophone,
                     captureSystemAudio: captureSystemAudio
                 )
             } catch {
-                errorMessage = error.localizedDescription
+                Task { @MainActor in
+                    self.errorMessage = error.localizedDescription
+                }
             }
         }
     }

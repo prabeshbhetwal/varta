@@ -1,6 +1,6 @@
 import Foundation
 
-enum RecorderState: String, Sendable {
+enum RecorderState: String, Sendable, Equatable {
     case idle
     case starting
     case recording
@@ -9,7 +9,7 @@ enum RecorderState: String, Sendable {
     case failed
 }
 
-struct RecorderStatusSnapshot: Sendable {
+struct RecorderStatusSnapshot: Sendable, Equatable {
     let state: RecorderState
     let meetingID: String?
     let jobID: String?

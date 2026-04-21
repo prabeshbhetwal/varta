@@ -39,8 +39,8 @@ final class ScreenCaptureSystemAudioCapture: NSObject, SystemAudioCapture, SCStr
             return
         }
 
-        try? await stream.stopCapture()
         self.stream = nil
+        try? await stream.stopCapture()
     }
 
     func stream(

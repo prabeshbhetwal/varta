@@ -7,6 +7,7 @@ struct HomeView: View {
     @StateObject private var viewModelHolder = HomeViewModelHolder()
     @State private var showingImporter = false
     @State private var showingRecordingControls = false
+    @State private var showingDeleteConfirmation = false
 
     private let supportedTypes: [UTType] = ["mp3", "m4a", "wav", "aiff", "mp4", "mov", "m4v"]
         .compactMap { UTType(filenameExtension: $0) }
@@ -15,11 +16,25 @@ struct HomeView: View {
         Group {
             if let storage = appModel.storageService {
                 let viewModel = viewModelHolder.viewModel(storageService: storage)
+                let selectedMeetingBinding = Binding<String?>(
+                    get: {
+                        guard let selectedMeetingID = viewModel.selectedMeetingID else {
+                            return nil
+                        }
+                        if viewModel.meetings.contains(where: { $0.id == selectedMeetingID }) {
+                            return selectedMeetingID
+                        }
+                        return nil
+                    },
+                    set: { newMeetingID in
+                        guard viewModel.selectedMeetingID != newMeetingID else {
+                            return
+                        }
+                        viewModel.selectedMeetingID = newMeetingID
+                    }
+                )
                 NavigationSplitView {
-                    List(viewModel.meetings, selection: Binding(
-                        get: { viewModel.selectedMeetingID },
-                        set: { viewModel.selectedMeetingID = $0 }
-                    )) { meeting in
+                    List(viewModel.meetings, selection: selectedMeetingBinding) { meeting in
                         VStack(alignment: .leading, spacing: 4) {
                             Text(meeting.title)
                                 .font(.headline)
@@ -27,32 +42,59 @@ struct HomeView: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
-                        .tag(meeting.id)
+                        .tag(Optional(meeting.id))
                     }
                     .overlay {
                         if viewModel.meetings.isEmpty {
-                            ContentUnavailableView("No Imported Meetings", systemImage: "tray")
+                            ContentUnavailableView {
+                                Label("No Recordings Yet", systemImage: "waveform.badge.plus")
+                            } description: {
+                                Text("Import audio/video or start a recording to create your first transcript source.")
+                            } actions: {
+                                HStack(spacing: 10) {
+                                    Button("Import File") {
+                                        showingImporter = true
+                                    }
+
+                                    if appModel.recorderCoordinator != nil {
+                                        Button("Start Recording") {
+                                            showingRecordingControls = true
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
+                    .navigationTitle("Recordings")
                 } detail: {
                     if let meetingID = viewModel.selectedMeetingID {
                         MeetingDetailView(meetingID: meetingID, storageService: storage)
+                            .id(meetingID)
                     } else {
-                        ContentUnavailableView("Select a Meeting", systemImage: "waveform")
+                        ContentUnavailableView("Select a Recording", systemImage: "list.bullet.rectangle")
                     }
                 }
+                .navigationSplitViewColumnWidth(min: 260, ideal: 320)
                 .toolbar {
-                    ToolbarItem(placement: .automatic) {
+                    ToolbarItemGroup(placement: .primaryAction) {
                         if appModel.recorderCoordinator != nil {
                             Button {
                                 showingRecordingControls = true
                             } label: {
-                                Label("Recording", systemImage: "mic.circle")
+                                Label("New Recording", systemImage: "record.circle")
                             }
+                            .help("Start a new local recording")
                         }
-                    }
 
-                    ToolbarItem(placement: .primaryAction) {
+                        Button {
+                            Task {
+                                await viewModel.refreshMeetings()
+                            }
+                        } label: {
+                            Label("Refresh", systemImage: "arrow.clockwise")
+                        }
+                        .help("Refresh meetings list")
+
                         Button {
                             showingImporter = true
                         } label: {
@@ -63,6 +105,15 @@ struct HomeView: View {
                             }
                         }
                         .disabled(viewModel.isImporting)
+                        .help("Import audio or video into a meeting")
+
+                        Button(role: .destructive) {
+                            showingDeleteConfirmation = true
+                        } label: {
+                            Label("Delete Meeting", systemImage: "trash")
+                        }
+                        .disabled(viewModel.selectedMeetingID == nil || viewModel.isDeleting)
+                        .help("Delete selected meeting and local files")
                     }
                 }
                 .task {
@@ -81,8 +132,25 @@ struct HomeView: View {
                         await viewModel.importMediaFile(at: firstURL)
                     }
                 }
-                .alert("Import Error", isPresented: Binding(
-                    get: { viewModel.errorMessage != nil },
+                .confirmationDialog(
+                    "Delete Meeting?",
+                    isPresented: $showingDeleteConfirmation,
+                    titleVisibility: .visible
+                ) {
+                    Button("Delete Meeting", role: .destructive) {
+                        guard let selectedMeetingID = viewModel.selectedMeetingID else {
+                            return
+                        }
+                        Task {
+                            await viewModel.deleteMeeting(meetingID: selectedMeetingID)
+                        }
+                    }
+                    Button("Cancel", role: .cancel) { }
+                } message: {
+                    Text("This permanently deletes \"\(viewModel.selectedMeetingTitle() ?? "Selected Recording")\", including local recordings and transcript data from this Mac.")
+                }
+                .alert("Action Error", isPresented: Binding(
+                    get: { viewModel.errorMessage != nil && !showingDeleteConfirmation },
                     set: { _ in viewModel.errorMessage = nil }
                 )) {
                     Button("OK", role: .cancel) { }
@@ -91,10 +159,26 @@ struct HomeView: View {
                 }
                 .sheet(isPresented: $showingRecordingControls) {
                     if let recorderCoordinator = appModel.recorderCoordinator {
-                        RecordingControlsView(recorderCoordinator: recorderCoordinator)
+                        RecordingControlsView(
+                            recorderCoordinator: recorderCoordinator,
+                            onRecordingSaved: { meetingID in
+                                Task {
+                                    await viewModel.refreshMeetings(select: meetingID)
+                                }
+                            }
+                        )
                     } else {
                         Text("Recording services are unavailable.")
                             .padding(20)
+                    }
+                }
+                .onChange(of: showingRecordingControls) {
+                    guard !showingRecordingControls else {
+                        return
+                    }
+
+                    Task {
+                        await viewModel.refreshMeetings()
                     }
                 }
             } else {

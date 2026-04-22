@@ -5,6 +5,7 @@ final class HomeViewModel: ObservableObject {
     @Published private(set) var meetings: [MeetingListItem] = []
     @Published var selectedMeetingID: String?
     @Published var isImporting = false
+    @Published var isDeleting = false
     @Published var errorMessage: String?
 
     private let storageService: StorageService
@@ -13,24 +14,29 @@ final class HomeViewModel: ObservableObject {
     init(storageService: StorageService) {
         self.storageService = storageService
 
-        let memoryManager = MemoryManager()
-        let transcriptionService = TranscriptionService(storageService: storageService, memoryManager: memoryManager)
-        let summariserService = SummariserService(storageService: storageService, memoryManager: memoryManager)
-        self.importService = ImportPipelineService(
-            storageService: storageService,
-            transcriptionService: transcriptionService,
-            summariserService: summariserService
-        )
+        self.importService = ImportPipelineService(storageService: storageService)
     }
 
     func refreshMeetings() async {
         do {
             meetings = try await storageService.listMeetings()
-            if selectedMeetingID == nil {
+            if selectedMeetingID == nil || !meetings.contains(where: { $0.id == selectedMeetingID }) {
                 selectedMeetingID = meetings.first?.id
             }
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    func refreshMeetings(select meetingID: String?) async {
+        await refreshMeetings()
+
+        guard let meetingID else {
+            return
+        }
+
+        if meetings.contains(where: { $0.id == meetingID }) {
+            selectedMeetingID = meetingID
         }
     }
 
@@ -45,5 +51,31 @@ final class HomeViewModel: ObservableObject {
         } catch {
             errorMessage = "Import failed: \(error.localizedDescription)"
         }
+    }
+
+    func deleteMeeting(meetingID: String) async {
+        guard !isDeleting else {
+            return
+        }
+
+        isDeleting = true
+        defer { isDeleting = false }
+
+        do {
+            try await storageService.deleteMeetingAndFiles(meetingID: meetingID)
+            errorMessage = nil
+            await refreshMeetings()
+        } catch {
+            errorMessage = "Delete failed: \(error.localizedDescription)"
+            await refreshMeetings()
+        }
+    }
+
+    func selectedMeetingTitle() -> String? {
+        guard let selectedMeetingID else {
+            return nil
+        }
+
+        return meetings.first(where: { $0.id == selectedMeetingID })?.title
     }
 }

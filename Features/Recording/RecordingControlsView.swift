@@ -3,8 +3,16 @@ import SwiftUI
 struct RecordingControlsView: View {
     @StateObject private var viewModel: RecordingControlsViewModel
 
-    init(recorderCoordinator: RecorderCoordinator) {
-        _viewModel = StateObject(wrappedValue: RecordingControlsViewModel(recorderCoordinator: recorderCoordinator))
+    init(
+        recorderCoordinator: RecorderCoordinator,
+        onRecordingSaved: @escaping (String?) -> Void = { _ in }
+    ) {
+        _viewModel = StateObject(
+            wrappedValue: RecordingControlsViewModel(
+                recorderCoordinator: recorderCoordinator,
+                onRecordingSaved: onRecordingSaved
+            )
+        )
     }
 
     var body: some View {
@@ -17,6 +25,9 @@ struct RecordingControlsView: View {
                 Toggle("Microphone", isOn: $viewModel.captureMicrophone)
                 Toggle("System Audio", isOn: $viewModel.captureSystemAudio)
             }
+            .disabled(viewModel.snapshot.state == .recording || viewModel.snapshot.state == .starting || viewModel.snapshot.state == .stopping)
+
+            statusBanner
 
             HStack(spacing: 12) {
                 Button("Start") {
@@ -39,6 +50,8 @@ struct RecordingControlsView: View {
                 }
                 .disabled(viewModel.snapshot.state == .idle || viewModel.snapshot.state == .stopping)
             }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.regular)
 
             GroupBox("Status") {
                 VStack(alignment: .leading, spacing: 6) {
@@ -59,15 +72,28 @@ struct RecordingControlsView: View {
                     .foregroundStyle(.secondary)
             }
 
+            if let userMessage = viewModel.userMessage, !userMessage.isEmpty {
+                Text(userMessage)
+                    .foregroundStyle(.secondary)
+            }
+
             if let errorMessage = viewModel.errorMessage {
-                Text(errorMessage)
-                    .foregroundStyle(.red)
+                GroupBox("Action Needed") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(errorMessage)
+                        Text("Check Microphone and Screen Recording permissions in Settings, then try again.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .tint(.red)
             }
 
             Spacer()
         }
         .padding(20)
-        .frame(minWidth: 540, minHeight: 420)
+        .frame(width: 540, height: 420)
         .task {
             viewModel.startPolling()
         }
@@ -107,5 +133,46 @@ struct RecordingControlsView: View {
         @unknown default:
             return "Unknown"
         }
+    }
+
+    private var statusBanner: some View {
+        let state = viewModel.snapshot.state
+        let label: String
+        let icon: String
+        let tint: Color
+
+        switch state {
+        case .idle:
+            label = "Ready to record"
+            icon = "record.circle"
+            tint = .secondary
+        case .starting:
+            label = "Starting capture…"
+            icon = "arrow.triangle.2.circlepath"
+            tint = .orange
+        case .recording:
+            label = "Recording"
+            icon = "waveform.badge.mic"
+            tint = .red
+        case .paused:
+            label = "Paused"
+            icon = "pause.circle"
+            tint = .yellow
+        case .stopping:
+            label = "Saving recording…"
+            icon = "square.and.arrow.down"
+            tint = .blue
+        case .failed:
+            label = "Recording failed"
+            icon = "exclamationmark.triangle"
+            tint = .red
+        }
+
+        return Label(label, systemImage: icon)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }

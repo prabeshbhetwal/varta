@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 private enum SettingsSection: String, CaseIterable, Identifiable {
@@ -52,17 +53,33 @@ private struct GeneralSettingsView: View {
     @State private var defaultMeetingTitlePrefix = ""
     @State private var enableCalendarSuggestions = true
     @State private var hasLoadedValues = false
+    @State private var storagePath = "Loading…"
+    @State private var storageFolderURL: URL?
 
     var body: some View {
         Form {
-            TextField("Default meeting title prefix", text: $defaultMeetingTitlePrefix)
+            Section("Defaults") {
+                TextField("Default meeting title prefix", text: $defaultMeetingTitlePrefix)
+                Toggle("Enable calendar suggestions", isOn: $enableCalendarSuggestions)
+            }
 
-            Toggle("Enable calendar suggestions", isOn: $enableCalendarSuggestions)
+            Section("Local Storage") {
+                Text(storagePath)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+
+                Button("Open Varta Folder in Finder") {
+                    openStorageFolderInFinder()
+                }
+                .disabled(storageFolderURL == nil)
+            }
         }
         .formStyle(.grouped)
         .padding(24)
         .task {
             await loadValuesIfNeeded()
+            await loadStoragePathIfNeeded()
         }
         .onChange(of: defaultMeetingTitlePrefix) {
             guard hasLoadedValues else { return }
@@ -87,6 +104,27 @@ private struct GeneralSettingsView: View {
         defaultMeetingTitlePrefix = (try? await store?.string(for: .defaultMeetingTitlePrefix)) ?? ""
         enableCalendarSuggestions = (try? await store?.bool(for: .enableCalendarSuggestions)) ?? true
         hasLoadedValues = true
+    }
+
+    private func loadStoragePathIfNeeded() async {
+        guard storageFolderURL == nil else {
+            return
+        }
+        guard let storageService = appModel.storageService else {
+            storagePath = "Unavailable"
+            return
+        }
+
+        let folderURL = await storageService.appSupportDirectory()
+        storageFolderURL = folderURL
+        storagePath = folderURL.path
+    }
+
+    private func openStorageFolderInFinder() {
+        guard let folderURL = storageFolderURL else {
+            return
+        }
+        NSWorkspace.shared.activateFileViewerSelecting([folderURL])
     }
 }
 

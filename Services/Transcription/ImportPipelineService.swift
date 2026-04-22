@@ -2,17 +2,11 @@ import Foundation
 
 actor ImportPipelineService {
     private let storageService: StorageService
-    private let transcriptionService: TranscriptionService
-    private let summariserService: SummariserService
 
     init(
-        storageService: StorageService,
-        transcriptionService: TranscriptionService,
-        summariserService: SummariserService
+        storageService: StorageService
     ) {
         self.storageService = storageService
-        self.transcriptionService = transcriptionService
-        self.summariserService = summariserService
     }
 
     func importMedia(
@@ -30,14 +24,6 @@ actor ImportPipelineService {
             format: sourceURL.pathExtension.lowercased(),
             durationSeconds: nil
         )
-
-        _ = try await transcriptionService.transcribeMeeting(
-            meetingID: meetingID,
-            mediaURL: imported.destinationURL,
-            languageMode: languageMode
-        )
-
-        _ = try await summariserService.summariseMeeting(meetingID: meetingID)
         return meetingID
     }
 }

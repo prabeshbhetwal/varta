@@ -2,36 +2,23 @@ import XCTest
 @testable import Varta
 
 final class LocalImportLoopIntegrationTests: XCTestCase {
-    func testImportTranscriptSummaryAndTranslationLoop() async throws {
+    func testImportThenTranscribeSelectedRecording() async throws {
         let storage = try StorageService(databaseURL: temporaryDatabaseURL())
         let memoryManager = MemoryManager()
         let transcription = TranscriptionService(storageService: storage, memoryManager: memoryManager)
-        let summariser = SummariserService(storageService: storage, memoryManager: memoryManager)
-        let importer = ImportPipelineService(
-            storageService: storage,
-            transcriptionService: transcription,
-            summariserService: summariser
-        )
-        let translator = TranslationService(storageService: storage, memoryManager: memoryManager)
+        let importer = ImportPipelineService(storageService: storage)
 
         let inputURL = try makeSampleMediaFile()
         let meetingID = try await importer.importMedia(from: inputURL, languageMode: .mixed)
 
+        let importedMedia = try await storage.importedMedia(for: meetingID)
+        XCTAssertFalse(importedMedia.isEmpty)
+
+        let importedURL = await storage.resolvedImportedMediaURL(relativePath: importedMedia[0].relativePath)
+        _ = try await transcription.transcribeMeeting(meetingID: meetingID, mediaURL: importedURL, languageMode: .mixed)
+
         let segments = try await storage.transcriptSegments(meetingID: meetingID)
         XCTAssertFalse(segments.isEmpty)
-
-        let summary = try await storage.summary(meetingID: meetingID)
-        XCTAssertNotNil(summary)
-        XCTAssertFalse(summary?.concise.isEmpty ?? true)
-
-        let englishOutputs = try await storage.generatedOutputs(meetingID: meetingID, language: .english)
-        XCTAssertFalse(englishOutputs.isEmpty)
-
-        let nepaliOutputs = try await translator.translateOutputs(meetingID: meetingID, targetLanguage: .nepali)
-        XCTAssertFalse(nepaliOutputs.isEmpty)
-
-        let actionItemsNepali = nepaliOutputs.first(where: { $0.type == .actionItems })?.content ?? ""
-        XCTAssertFalse(actionItemsNepali.isEmpty)
 
         let appSupport = await storage.appSupportDirectory()
         let promptDirectory = appSupport.appendingPathComponent("Prompts", isDirectory: true)

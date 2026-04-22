@@ -270,9 +270,9 @@ actor RecorderCoordinator {
                         try micWriter.append(sampleBuffer: sampleBuffer)
                     } catch RecordingWriter.WriterError.inputNotReady {
                         // Backpressure drop keeps in-memory usage bounded.
-                    } catch RecordingWriter.WriterError.incompatibleAudioFormat {
+                    } catch RecordingWriter.WriterError.unsupportedAudioFormat(_) {
                         Task { await self?.handleIncompatibleAudioFormat(for: .microphone) }
-                    } catch RecordingWriter.WriterError.invalidSampleBuffer {
+                    } catch RecordingWriter.WriterError.invalidSampleBuffer(_) {
                         Task { await self?.handleInvalidSampleBuffer(for: .microphone) }
                     } catch {
                         Task { await self?.handleWriterFailure(errorDescription: "[microphone] \(error.localizedDescription)") }
@@ -307,9 +307,9 @@ actor RecorderCoordinator {
                         try systemWriter.append(sampleBuffer: sampleBuffer)
                     } catch RecordingWriter.WriterError.inputNotReady {
                         // Backpressure drop keeps in-memory usage bounded.
-                    } catch RecordingWriter.WriterError.incompatibleAudioFormat {
+                    } catch RecordingWriter.WriterError.unsupportedAudioFormat(_) {
                         Task { await self?.handleIncompatibleAudioFormat(for: .system) }
-                    } catch RecordingWriter.WriterError.invalidSampleBuffer {
+                    } catch RecordingWriter.WriterError.invalidSampleBuffer(_) {
                         Task { await self?.handleInvalidSampleBuffer(for: .system) }
                     } catch {
                         Task { await self?.handleWriterFailure(errorDescription: "[system] \(error.localizedDescription)") }
@@ -401,12 +401,20 @@ actor RecorderCoordinator {
         var maxSegmentDuration: Double = 0
         var registeredPaths: [String] = []
 
-        for (_, writer) in writersBySource {
+        for (source, writer) in writersBySource {
             do {
                 let segmentDuration = try await writer.finishWriting()
                 maxSegmentDuration = max(maxSegmentDuration, segmentDuration)
 
                 if let outputURL = writer.outputURL {
+                    guard hasPersistedAudioContent(at: outputURL, durationSeconds: segmentDuration) else {
+                        try? FileManager.default.removeItem(at: outputURL)
+                        if source == .system {
+                            note = "System audio stream produced no playable samples for this segment."
+                        }
+                        continue
+                    }
+
                     let appSupport = await storageService.appSupportDirectory()
                     let relativePath = outputURL.path.replacingOccurrences(of: appSupport.path + "/", with: "")
                     registeredPaths.append(relativePath)
@@ -432,6 +440,21 @@ actor RecorderCoordinator {
         }
 
         self.writersBySource = [:]
+    }
+
+    private func hasPersistedAudioContent(at url: URL, durationSeconds: Double) -> Bool {
+        guard durationSeconds > 0.05 else {
+            return false
+        }
+
+        guard
+            let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+            let size = attributes[.size] as? NSNumber
+        else {
+            return false
+        }
+
+        return size.intValue > 1024
     }
 
     private func startCheckpointLoop() {

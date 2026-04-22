@@ -6,7 +6,7 @@ struct TranscriptTabView: View {
     var body: some View {
         List {
             if viewModel.segments.isEmpty {
-                Text("No transcript segments yet.")
+                Text(viewModel.transcriptEmptyMessage())
                     .foregroundStyle(.secondary)
             }
 

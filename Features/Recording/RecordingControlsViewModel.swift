@@ -18,12 +18,18 @@ final class RecordingControlsViewModel: ObservableObject {
     @Published var captureMicrophone = true
     @Published var captureSystemAudio = true
     @Published var errorMessage: String?
+    @Published var userMessage: String?
 
     private let recorderCoordinator: RecorderCoordinator
+    private let onRecordingSaved: (String?) -> Void
     private var pollingTask: Task<Void, Never>?
 
-    init(recorderCoordinator: RecorderCoordinator) {
+    init(
+        recorderCoordinator: RecorderCoordinator,
+        onRecordingSaved: @escaping (String?) -> Void = { _ in }
+    ) {
         self.recorderCoordinator = recorderCoordinator
+        self.onRecordingSaved = onRecordingSaved
     }
 
     deinit {
@@ -37,6 +43,7 @@ final class RecordingControlsViewModel: ObservableObject {
 
         pollingTask = Task { [weak self] in
             guard let self else { return }
+            try? await Task.sleep(nanoseconds: 150_000_000)
             while !Task.isCancelled {
                 let snapshot = await recorderCoordinator.currentSnapshot()
                 if self.snapshot != snapshot {
@@ -56,15 +63,18 @@ final class RecordingControlsViewModel: ObservableObject {
         Task {
             do {
                 errorMessage = nil
+                userMessage = "Starting recording…"
                 try await recorderCoordinator.startRecording(
                     configuration: RecorderStartConfiguration(
                         captureMicrophone: captureMicrophone,
                         captureSystemAudio: captureSystemAudio
                     )
                 )
+                userMessage = "Recording in progress."
             } catch {
                 Task { @MainActor in
-                    self.errorMessage = error.localizedDescription
+                    self.userMessage = nil
+                    self.errorMessage = friendlyMessage(for: error)
                 }
             }
         }
@@ -80,21 +90,55 @@ final class RecordingControlsViewModel: ObservableObject {
         Task {
             do {
                 errorMessage = nil
+                userMessage = "Resuming recording…"
                 try await recorderCoordinator.resumeRecording(
                     captureMicrophone: captureMicrophone,
                     captureSystemAudio: captureSystemAudio
                 )
+                userMessage = "Recording resumed."
             } catch {
                 Task { @MainActor in
-                    self.errorMessage = error.localizedDescription
+                    self.userMessage = nil
+                    self.errorMessage = friendlyMessage(for: error)
                 }
             }
         }
     }
 
     func stopRecording() {
+        let stateBeforeStop = snapshot.state
+        guard stateBeforeStop == .recording || stateBeforeStop == .paused || stateBeforeStop == .starting else {
+            return
+        }
+
+        let savedMeetingID = snapshot.meetingID
+        errorMessage = nil
+        userMessage = "Saving recording…"
+
         Task {
             await recorderCoordinator.stopRecording()
+            let latest = await recorderCoordinator.currentSnapshot()
+
+            await MainActor.run {
+                if latest.state == .idle {
+                    self.userMessage = "Recording saved locally and added to meetings."
+                    self.onRecordingSaved(savedMeetingID)
+                } else if latest.state == .failed {
+                    self.userMessage = nil
+                    self.errorMessage = latest.note ?? "Recording failed. Check permissions and try again."
+                }
+            }
         }
+    }
+
+    private func friendlyMessage(for error: Error) -> String {
+        let raw = error.localizedDescription
+        if raw.localizedCaseInsensitiveContains("screen recording permission") {
+            return "System audio capture needs Screen Recording permission. Grant permission in Settings and try again."
+        }
+        if raw.localizedCaseInsensitiveContains("microphone") {
+            return "Microphone capture failed. Check microphone permission and input device."
+        }
+        return raw
     }
 }

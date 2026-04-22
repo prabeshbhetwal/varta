@@ -4,6 +4,9 @@ import GRDB
 actor StorageService {
     enum StorageError: Error {
         case transcriptSegmentLocked(segmentID: Int64)
+        case meetingNotFound(meetingID: String)
+        case fileDeletionFailed(path: String, reason: String)
+        case folderDeletionFailed(path: String, reason: String)
     }
 
     let databaseURL: URL
@@ -726,6 +729,12 @@ actor StorageService {
         appSupportDirectoryURL
     }
 
+    func recordingsDirectory(meetingID: String) -> URL {
+        appSupportDirectoryURL
+            .appendingPathComponent("Recordings", isDirectory: true)
+            .appendingPathComponent(meetingID, isDirectory: true)
+    }
+
     func importMediaFile(sourceURL: URL, meetingID: String) throws -> (relativePath: String, destinationURL: URL) {
         let importsDirectory = appSupportDirectoryURL.appendingPathComponent("Imports", isDirectory: true)
         let meetingDirectory = importsDirectory.appendingPathComponent(meetingID, isDirectory: true)
@@ -742,6 +751,64 @@ actor StorageService {
 
         let relativePath = destinationURL.path.replacingOccurrences(of: appSupportDirectoryURL.path + "/", with: "")
         return (relativePath, destinationURL)
+    }
+
+    func deleteMeetingAndFiles(meetingID: String, fileManager: FileManager = .default) throws {
+        let relativePaths: [String] = try dbQueue.read { db in
+            try String.fetchAll(
+                db,
+                sql: """
+                SELECT relative_path
+                FROM audio_files
+                WHERE meeting_id = ?
+                """,
+                arguments: [meetingID]
+            )
+        }
+
+        let fileURLs = relativePaths.map { appSupportDirectoryURL.appendingPathComponent($0) }
+        let directories = [
+            appSupportDirectoryURL.appendingPathComponent("Recordings", isDirectory: true)
+                .appendingPathComponent(meetingID, isDirectory: true),
+            appSupportDirectoryURL.appendingPathComponent("Imports", isDirectory: true)
+                .appendingPathComponent(meetingID, isDirectory: true),
+        ]
+
+        for fileURL in fileURLs {
+            guard fileManager.fileExists(atPath: fileURL.path) else {
+                continue
+            }
+
+            do {
+                try fileManager.removeItem(at: fileURL)
+            } catch {
+                throw StorageError.fileDeletionFailed(path: fileURL.path, reason: error.localizedDescription)
+            }
+        }
+
+        for directoryURL in directories {
+            guard fileManager.fileExists(atPath: directoryURL.path) else {
+                continue
+            }
+
+            do {
+                try fileManager.removeItem(at: directoryURL)
+            } catch {
+                throw StorageError.folderDeletionFailed(path: directoryURL.path, reason: error.localizedDescription)
+            }
+        }
+
+        try dbQueue.write { db in
+            let changesBeforeDelete = db.changesCount
+            try db.execute(
+                sql: "DELETE FROM meetings WHERE id = ?",
+                arguments: [meetingID]
+            )
+            let changesAfterDelete = db.changesCount
+            if changesAfterDelete == changesBeforeDelete {
+                throw StorageError.meetingNotFound(meetingID: meetingID)
+            }
+        }
     }
 
     static func applicationSupportDirectory(fileManager: FileManager) throws -> URL {
@@ -783,5 +850,20 @@ actor StorageService {
             checkpointOffsetSeconds: row["checkpoint_offset_seconds"],
             updatedAt: Date(timeIntervalSince1970: row["updated_at_ts"] ?? 0)
         )
+    }
+}
+
+extension StorageService.StorageError: LocalizedError {
+    var errorDescription: String? {
+        switch self {
+        case .transcriptSegmentLocked(let segmentID):
+            return "Segment \(segmentID) is locked and cannot be edited."
+        case .meetingNotFound(let meetingID):
+            return "Meeting \(meetingID) was not found."
+        case .fileDeletionFailed(let path, let reason):
+            return "Failed to delete file at \(path): \(reason)"
+        case .folderDeletionFailed(let path, let reason):
+            return "Failed to delete folder at \(path): \(reason)"
+        }
     }
 }

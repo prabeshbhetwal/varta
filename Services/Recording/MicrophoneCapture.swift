@@ -40,10 +40,10 @@ final class AVFoundationMicrophoneCapture: NSObject, MicrophoneCapture, AVCaptur
         }
 
         let output = AVCaptureAudioDataOutput()
+        // Keep capture format constraints minimal so CoreMediaIO can choose
+        // a hardware-native path and avoid converter reconfiguration failures.
         output.audioSettings = [
             AVFormatIDKey: kAudioFormatLinearPCM,
-            AVSampleRateKey: 48_000,
-            AVNumberOfChannelsKey: 2,
             AVLinearPCMBitDepthKey: 16,
             AVLinearPCMIsFloatKey: false,
             AVLinearPCMIsNonInterleaved: false,

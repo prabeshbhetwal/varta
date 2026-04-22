@@ -72,12 +72,16 @@ final class RecordingWriter: @unchecked Sendable {
             }
 
             if audioInput == nil {
+                let settings = aacOutputSettings(
+                    sampleRate: normalizedBuffer.asbd.mSampleRate,
+                    channelCount: Int(normalizedBuffer.asbd.mChannelsPerFrame)
+                )
+                guard writer.canApply(outputSettings: settings, forMediaType: .audio) else {
+                    throw WriterError.failedToCreateWriter
+                }
                 let input = AVAssetWriterInput(
                     mediaType: .audio,
-                    outputSettings: aacOutputSettings(
-                        sampleRate: normalizedBuffer.asbd.mSampleRate,
-                        channelCount: Int(normalizedBuffer.asbd.mChannelsPerFrame)
-                    )
+                    outputSettings: settings
                 )
                 input.expectsMediaDataInRealTime = true
 
@@ -169,7 +173,12 @@ final class RecordingWriter: @unchecked Sendable {
 
     private func aacOutputSettings(sampleRate: Double, channelCount: Int) -> [String: Any] {
         let sanitizedChannels = max(1, min(channelCount, 2))
-        let sanitizedSampleRate = max(sampleRate, 8_000)
+        let sanitizedSampleRate: Double
+        if sampleRate.isFinite {
+            sanitizedSampleRate = min(max(sampleRate, 8_000), 96_000)
+        } else {
+            sanitizedSampleRate = 48_000
+        }
         let bitRate = max(sanitizedChannels * 64_000, 64_000)
         return [
             AVFormatIDKey: kAudioFormatMPEG4AAC,

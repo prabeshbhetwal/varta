@@ -94,6 +94,12 @@ actor StorageService {
         }
     }
 
+    func meetingTitle(meetingID: String) throws -> String? {
+        try dbQueue.read { db in
+            try String.fetchOne(db, sql: "SELECT title FROM meetings WHERE id = ?", arguments: [meetingID])
+        }
+    }
+
     func listMeetings() throws -> [MeetingListItem] {
         try dbQueue.read { db in
             let rows = try Row.fetchAll(

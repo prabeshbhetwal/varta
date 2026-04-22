@@ -1,5 +1,4 @@
 import Foundation
-@preconcurrency import CoreMedia
 import ScreenCaptureKit
 
 protocol SystemAudioCapture: AnyObject, Sendable {
@@ -26,15 +25,10 @@ final class ScreenCaptureSystemAudioCapture: NSObject, SystemAudioCapture, SCStr
         configuration.excludesCurrentProcessAudio = true
         configuration.sampleRate = 48_000
         configuration.channelCount = 2
-        configuration.queueDepth = 3
-        configuration.width = 2
-        configuration.height = 2
-        configuration.minimumFrameInterval = CMTime(value: 1, timescale: 1)
-        configuration.showsCursor = false
+        configuration.queueDepth = 8
 
         let stream = SCStream(filter: filter, configuration: configuration, delegate: nil)
         try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: outputQueue)
-        try stream.addStreamOutput(self, type: .screen, sampleHandlerQueue: outputQueue)
         try await stream.startCapture()
         self.stream = stream
     }

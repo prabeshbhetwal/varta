@@ -12,6 +12,7 @@ final class MeetingDetailViewModel: ObservableObject {
     @Published private(set) var isGeneratingTranscript = false
     @Published var errorMessage: String?
     @Published var successMessage: String?
+    @Published private(set) var meetingTitle: String = ""
 
     let meetingID: String
 
@@ -32,11 +33,13 @@ final class MeetingDetailViewModel: ObservableObject {
         do {
             segments = try await storageService.transcriptSegments(meetingID: meetingID)
             importedMedia = try await storageService.importedMedia(for: meetingID)
+            meetingTitle = (try? await storageService.meetingTitle(meetingID: meetingID)) ?? ""
             appSupportDirectoryURL = await storageService.appSupportDirectory()
             recordingsFolderURL = await storageService.recordingsDirectory(meetingID: meetingID)
         } catch {
             segments = []
             importedMedia = []
+            meetingTitle = ""
             errorMessage = error.localizedDescription
         }
 
@@ -197,5 +200,9 @@ final class MeetingDetailViewModel: ObservableObject {
         let minutes = total / 60
         let secs = total % 60
         return String(format: "%02d:%02d", minutes, secs)
+    }
+    
+    func meetingDisplayTitle() -> String {
+        meetingTitle.isEmpty ? "Recording" : meetingTitle
     }
 }

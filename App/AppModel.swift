@@ -60,7 +60,6 @@ final class AppModel: ObservableObject {
             launchState = .failed("Failed to initialise local storage: \(error.localizedDescription)")
         }
 
-        permissions.refreshAll()
     }
 
     func completeOnboarding() async {

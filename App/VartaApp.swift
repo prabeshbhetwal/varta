@@ -8,11 +8,18 @@ struct VartaApp: App {
         WindowGroup {
             RootView()
                 .environmentObject(appModel)
+                .disableSystemWritingTools()
         }
+    }
+}
 
-        Settings {
-            SettingsShellView()
-                .environmentObject(appModel)
+private extension View {
+    @ViewBuilder
+    func disableSystemWritingTools() -> some View {
+        if #available(macOS 15.0, *) {
+            writingToolsBehavior(.disabled)
+        } else {
+            self
         }
     }
 }

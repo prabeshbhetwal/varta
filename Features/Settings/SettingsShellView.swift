@@ -51,7 +51,6 @@ private struct GeneralSettingsView: View {
     @EnvironmentObject private var appModel: AppModel
 
     @State private var defaultMeetingTitlePrefix = ""
-    @State private var enableCalendarSuggestions = true
     @State private var hasLoadedValues = false
     @State private var storagePath = "Loading…"
     @State private var storageFolderURL: URL?
@@ -60,7 +59,6 @@ private struct GeneralSettingsView: View {
         Form {
             Section("Defaults") {
                 TextField("Default meeting title prefix", text: $defaultMeetingTitlePrefix)
-                Toggle("Enable calendar suggestions", isOn: $enableCalendarSuggestions)
             }
 
             Section("Local Storage") {
@@ -87,12 +85,6 @@ private struct GeneralSettingsView: View {
                 try? await appModel.settingsStore?.set(defaultMeetingTitlePrefix, for: .defaultMeetingTitlePrefix)
             }
         }
-        .onChange(of: enableCalendarSuggestions) {
-            guard hasLoadedValues else { return }
-            Task {
-                try? await appModel.settingsStore?.set(enableCalendarSuggestions, for: .enableCalendarSuggestions)
-            }
-        }
     }
 
     private func loadValuesIfNeeded() async {
@@ -102,7 +94,6 @@ private struct GeneralSettingsView: View {
 
         let store = appModel.settingsStore
         defaultMeetingTitlePrefix = (try? await store?.string(for: .defaultMeetingTitlePrefix)) ?? ""
-        enableCalendarSuggestions = (try? await store?.bool(for: .enableCalendarSuggestions)) ?? true
         hasLoadedValues = true
     }
 
@@ -134,8 +125,6 @@ private struct PermissionSettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             SettingsPermissionStatusRow(title: "Microphone", state: appModel.permissions.microphoneState.rawValue)
-            SettingsPermissionStatusRow(title: "Screen Recording", state: appModel.permissions.screenRecordingState.rawValue)
-            SettingsPermissionStatusRow(title: "Calendar", state: appModel.permissions.calendarState.rawValue)
 
             HStack(spacing: 12) {
                 Button("Request Microphone") {
@@ -143,20 +132,12 @@ private struct PermissionSettingsView: View {
                         await appModel.permissions.requestMicrophonePermission()
                     }
                 }
-                Button("Request Screen Recording") {
-                    appModel.permissions.requestScreenRecordingPermission()
-                }
-                Button("Request Calendar") {
-                    Task {
-                        await appModel.permissions.requestCalendarPermission()
-                    }
-                }
             }
         }
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .task {
-            appModel.permissions.refreshAll()
+            appModel.permissions.refreshMicrophone()
         }
     }
 }

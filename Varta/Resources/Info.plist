@@ -20,8 +20,6 @@
     <string>1</string>
     <key>LSMinimumSystemVersion</key>
     <string>$(MACOSX_DEPLOYMENT_TARGET)</string>
-    <key>NSCalendarsFullAccessUsageDescription</key>
-    <string>Varta uses calendar access to create events you approve from meeting follow-ups.</string>
     <key>NSMicrophoneUsageDescription</key>
     <string>Varta needs microphone access to record meeting audio locally on your Mac.</string>
     <key>NSSupportsAutomaticGraphicsSwitching</key>

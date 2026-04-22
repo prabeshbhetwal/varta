@@ -20,11 +20,7 @@ struct RootView: View {
             .padding(24)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .ready:
-            if appModel.hasCompletedOnboarding {
-                HomeView()
-            } else {
-                OnboardingView()
-            }
+            HomeView()
         }
     }
 }

@@ -13,6 +13,7 @@ actor RecorderCoordinator {
         var meetingID: String
         var jobID: String
         var startedAt: Date
+        var createdMeeting: Bool
         var captureMicrophone: Bool
         var captureSystemAudio: Bool
         var totalRecordedSeconds: Double
@@ -66,12 +67,19 @@ actor RecorderCoordinator {
 
     func currentSnapshot() async -> RecorderStatusSnapshot {
         let canRunHeavy = await memoryManager.currentRuntimeMode() != .paused
+        let recordedSeconds: Double
+        if let activeSession {
+            recordedSeconds = activeSession.totalRecordedSeconds + activeSegmentElapsedSeconds(activeSession)
+        } else {
+            recordedSeconds = 0
+        }
+
         return RecorderStatusSnapshot(
             state: state,
             meetingID: activeSession?.meetingID,
             jobID: activeSession?.jobID,
             segmentCount: activeSession?.segmentRelativePaths.count ?? 0,
-            totalRecordedSeconds: activeSession?.totalRecordedSeconds ?? 0,
+            totalRecordedSeconds: recordedSeconds,
             startedAt: activeSession?.startedAt,
             onBattery: onBattery,
             thermalState: thermalState,
@@ -81,7 +89,7 @@ actor RecorderCoordinator {
     }
 
     func startRecording(configuration: RecorderStartConfiguration) async throws {
-        guard state == .idle || state == .failed else {
+        guard state == .idle || state == .failed || state == .completed else {
             throw RecorderError.invalidRecordingConfiguration
         }
 
@@ -93,12 +101,14 @@ actor RecorderCoordinator {
         note = "Preparing capture devices"
 
         let meetingID = try await resolveMeetingID(using: configuration)
+        let createdMeeting = configuration.meetingID == nil
         let job = try await jobQueue.beginRecordingJob(meetingID: meetingID)
 
         activeSession = ActiveSession(
             meetingID: meetingID,
             jobID: job.id,
             startedAt: Date(),
+            createdMeeting: createdMeeting,
             captureMicrophone: configuration.captureMicrophone,
             captureSystemAudio: configuration.captureSystemAudio,
             totalRecordedSeconds: 0,
@@ -116,13 +126,18 @@ actor RecorderCoordinator {
             state = .recording
             note = "Recording"
         } catch {
+            let failedSession = activeSession
             await stopInputsAndCloseWriter()
             await saveCheckpoint(reason: .failure)
             state = .failed
             note = "Recording start failed: \(error.localizedDescription)"
-            if let activeSession {
-                try? await jobQueue.failRecordingJob(jobID: activeSession.jobID, errorMessage: error.localizedDescription)
+            if let failedSession {
+                try? await jobQueue.failRecordingJob(jobID: failedSession.jobID, errorMessage: error.localizedDescription)
+                if failedSession.createdMeeting {
+                    try? await storageService.deleteMeetingAndFiles(meetingID: failedSession.meetingID)
+                }
             }
+            activeSession = nil
             throw error
         }
     }
@@ -184,14 +199,25 @@ actor RecorderCoordinator {
             return
         }
 
+        guard !activeSession.segmentRelativePaths.isEmpty else {
+            try? await jobQueue.failRecordingJob(jobID: activeSession.jobID, errorMessage: "No playable audio was captured.")
+            if activeSession.createdMeeting {
+                try? await storageService.deleteMeetingAndFiles(meetingID: activeSession.meetingID)
+            }
+            self.activeSession = nil
+            state = .failed
+            note = "No playable audio was captured. Check microphone input and try again."
+            return
+        }
+
         try? await jobQueue.completeRecordingJob(jobID: activeSession.jobID)
 
-        state = .idle
-        note = nil
+        self.activeSession = nil
+        state = .completed
+        note = "Recording saved"
         isHandlingWriterFailure = false
         hasLoggedFormatMismatch = false
         hasLoggedInvalidBuffer = false
-        self.activeSession = nil
     }
 
     func handleWillSleep() async {

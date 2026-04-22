@@ -7,6 +7,7 @@ enum RecorderState: String, Sendable, Equatable {
     case paused
     case stopping
     case failed
+    case completed
 }
 
 struct RecorderStatusSnapshot: Sendable, Equatable {

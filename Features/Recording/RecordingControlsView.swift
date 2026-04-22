@@ -48,14 +48,14 @@ struct RecordingControlsView: View {
                 Button("Stop", role: .destructive) {
                     viewModel.stopRecording()
                 }
-                .disabled(viewModel.snapshot.state == .idle || viewModel.snapshot.state == .stopping)
+                .disabled(viewModel.snapshot.state == .idle || viewModel.snapshot.state == .completed || viewModel.snapshot.state == .stopping)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.regular)
 
             GroupBox("Status") {
                 VStack(alignment: .leading, spacing: 6) {
-                    statusRow("State", viewModel.snapshot.state.rawValue.capitalized)
+                statusRow("State", viewModel.snapshot.state.rawValue.capitalized)
                     statusRow("Meeting", viewModel.snapshot.meetingID ?? "-")
                     statusRow("Job", viewModel.snapshot.jobID ?? "-")
                     statusRow("Recorded", formatted(seconds: viewModel.snapshot.totalRecordedSeconds))
@@ -146,6 +146,10 @@ struct RecordingControlsView: View {
             label = "Ready to record"
             icon = "record.circle"
             tint = .secondary
+        case .completed:
+            label = "Recording saved"
+            icon = "checkmark.circle"
+            tint = .green
         case .starting:
             label = "Starting capture…"
             icon = "arrow.triangle.2.circlepath"

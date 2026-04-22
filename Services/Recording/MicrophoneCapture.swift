@@ -30,6 +30,32 @@ final class AVFoundationMicrophoneCapture: NSObject, MicrophoneCapture, AVCaptur
             return
         }
 
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            break
+        case .notDetermined:
+            let granted = await AVCaptureDevice.requestAccess(for: .audio)
+            guard granted else {
+                throw NSError(
+                    domain: "Varta.Microphone",
+                    code: 1100,
+                    userInfo: [NSLocalizedDescriptionKey: "Microphone permission was denied."]
+                )
+            }
+        case .denied, .restricted:
+            throw NSError(
+                domain: "Varta.Microphone",
+                code: 1100,
+                userInfo: [NSLocalizedDescriptionKey: "Microphone permission is required to record audio."]
+            )
+        @unknown default:
+            throw NSError(
+                domain: "Varta.Microphone",
+                code: 1100,
+                userInfo: [NSLocalizedDescriptionKey: "Microphone permission is unavailable."]
+            )
+        }
+
         guard let microphone = AVCaptureDevice.default(for: .audio) else {
             throw NSError(domain: "Varta.Microphone", code: 1101, userInfo: [NSLocalizedDescriptionKey: "No microphone input device available"])
         }

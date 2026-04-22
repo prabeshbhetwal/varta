@@ -16,7 +16,7 @@ final class RecordingControlsViewModel: ObservableObject {
     )
 
     @Published var captureMicrophone = true
-    @Published var captureSystemAudio = true
+    @Published var captureSystemAudio = false
     @Published var errorMessage: String?
     @Published var userMessage: String?
 
@@ -59,7 +59,21 @@ final class RecordingControlsViewModel: ObservableObject {
         pollingTask = nil
     }
 
+    func refreshSnapshot() async {
+        snapshot = await recorderCoordinator.currentSnapshot()
+    }
+
+    func startMicrophoneRecording() {
+        captureMicrophone = true
+        captureSystemAudio = false
+        startRecording()
+    }
+
     func startRecording() {
+        guard snapshot.state == .idle || snapshot.state == .failed || snapshot.state == .completed else {
+            return
+        }
+
         Task {
             do {
                 errorMessage = nil
@@ -70,12 +84,17 @@ final class RecordingControlsViewModel: ObservableObject {
                         captureSystemAudio: captureSystemAudio
                     )
                 )
-                userMessage = "Recording in progress."
-            } catch {
-                Task { @MainActor in
-                    self.userMessage = nil
-                    self.errorMessage = friendlyMessage(for: error)
+                await refreshSnapshot()
+                if snapshot.state == .recording {
+                    userMessage = nil
+                } else if snapshot.state == .failed {
+                    userMessage = nil
+                    errorMessage = snapshot.note ?? "Recording failed to start."
                 }
+            } catch {
+                await refreshSnapshot()
+                userMessage = nil
+                errorMessage = friendlyMessage(for: error)
             }
         }
     }
@@ -83,6 +102,8 @@ final class RecordingControlsViewModel: ObservableObject {
     func pauseRecording() {
         Task {
             await recorderCoordinator.pauseRecording()
+            await refreshSnapshot()
+            userMessage = snapshot.state == .paused ? "Recording paused." : nil
         }
     }
 
@@ -95,38 +116,39 @@ final class RecordingControlsViewModel: ObservableObject {
                     captureMicrophone: captureMicrophone,
                     captureSystemAudio: captureSystemAudio
                 )
-                userMessage = "Recording resumed."
+                await refreshSnapshot()
+                userMessage = nil
             } catch {
-                Task { @MainActor in
-                    self.userMessage = nil
-                    self.errorMessage = friendlyMessage(for: error)
-                }
+                await refreshSnapshot()
+                userMessage = nil
+                errorMessage = friendlyMessage(for: error)
             }
         }
     }
 
     func stopRecording() {
-        let stateBeforeStop = snapshot.state
-        guard stateBeforeStop == .recording || stateBeforeStop == .paused || stateBeforeStop == .starting else {
-            return
-        }
-
-        let savedMeetingID = snapshot.meetingID
         errorMessage = nil
         userMessage = "Saving recording…"
 
         Task {
+            let beforeStop = await recorderCoordinator.currentSnapshot()
+            snapshot = beforeStop
+            guard beforeStop.state == .recording || beforeStop.state == .paused || beforeStop.state == .starting else {
+                userMessage = nil
+                return
+            }
+
+            let savedMeetingID = beforeStop.meetingID
             await recorderCoordinator.stopRecording()
             let latest = await recorderCoordinator.currentSnapshot()
+            snapshot = latest
 
-            await MainActor.run {
-                if latest.state == .idle {
-                    self.userMessage = "Recording saved locally and added to meetings."
-                    self.onRecordingSaved(savedMeetingID)
-                } else if latest.state == .failed {
-                    self.userMessage = nil
-                    self.errorMessage = latest.note ?? "Recording failed. Check permissions and try again."
-                }
+            if latest.state == .completed {
+                userMessage = "Recording saved locally and added to recordings."
+                onRecordingSaved(savedMeetingID)
+            } else if latest.state == .failed {
+                userMessage = nil
+                errorMessage = latest.note ?? "Recording failed. Check permissions and try again."
             }
         }
     }

@@ -1090,6 +1090,8 @@ extension StorageService.StorageError: LocalizedError {
             return "Transcript changed during processing. Previous content remains; generate again from the latest review."
         case .generatedContentChanged:
             return "Meeting outputs changed during processing. Review the latest content and retry."
+        case .sourceMediaChanged:
+            return "Meeting audio changed during processing. Original audio and prior content remain preserved; start a new transcription."
         }
     }
 }

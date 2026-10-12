@@ -69,6 +69,8 @@ The public-repository native-checks workflow uses standard macos-26 capacity,
 bounded timeouts, jobs=2 and serial test execution. Its synthetic fixtures exercise
 orchestration, storage, media conversion and Calendar failure paths, not model
 accuracy or real permission flows. No model weights are downloaded in CI.
+CI also enables mandatory module compile guards: missing Whisper/MLX imports fail
+the build instead of exercising an unavailable-engine fallback.
 
 ## Recovery and safety
 

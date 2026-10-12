@@ -48,6 +48,7 @@ jobs:
             -derivedDataPath .audit/ci-derived-data \
             -resultBundlePath .audit/ci-test-results.xcresult \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            SWIFT_ACTIVE_COMPILATION_CONDITIONS='$(inherited) VARTA_REQUIRE_NATIVE_ENGINES' \
             test > .audit/native-tests.log 2>&1
       - name: Preserve native check evidence
         if: always()

@@ -1,5 +1,8 @@
 import AVFoundation
 import Foundation
+#if VARTA_REQUIRE_NATIVE_ENGINES && !canImport(whisper)
+#error("Native CI requires the prepared whisper.cpp module.")
+#endif
 #if canImport(whisper)
 import whisper
 #endif

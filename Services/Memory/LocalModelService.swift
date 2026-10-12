@@ -1,4 +1,7 @@
 import Foundation
+#if VARTA_REQUIRE_NATIVE_ENGINES && (!canImport(MLXLLM) || !canImport(MLXLMCommon) || !canImport(MLX))
+#error("Native CI requires all declared MLX model modules.")
+#endif
 #if canImport(MLXLLM) && canImport(MLXLMCommon) && canImport(MLX)
 import MLX
 import MLXLLM

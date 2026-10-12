@@ -270,8 +270,14 @@ actor MediaProcessingService {
                 duration: CMTime(seconds: cursor - audioEnd, preferredTimescale: 16_000)))
         }
         // Normalise simultaneous sources without attenuating sequential chunks by the total file count.
-        let events = intervals.flatMap { [(time: $0.0, change: 1), (time: $0.1, change: -1)] }
-            .sorted { $0.time == $1.time ? $0.change < $1.change : $0.time < $1.time }
+        var events: [(time: Double, change: Int)] = []
+        for (start, end) in intervals {
+            events.append((time: start, change: 1))
+            events.append((time: end, change: -1))
+        }
+        events.sort { lhs, rhs in
+            lhs.time == rhs.time ? lhs.change < rhs.change : lhs.time < rhs.time
+        }
         var active = 0
         var maximumActive = 1
         for event in events { active += event.change; maximumActive = max(maximumActive, active) }

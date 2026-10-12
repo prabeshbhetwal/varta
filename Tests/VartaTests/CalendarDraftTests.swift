@@ -94,7 +94,7 @@ final class CalendarDraftTests: XCTestCase {
         do {
             try await service.createEvent(meetingID: meetingID, candidateKey: candidateKey, draft: draft)
             XCTFail("Stale calendar suggestion should fail")
-        } catch StorageError.transcriptChanged { }
+        } catch StorageService.StorageError.transcriptChanged { }
         XCTAssertEqual(writer.saveCount, 0)
     }
 

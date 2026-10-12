@@ -51,6 +51,13 @@ final class MemoryManagerLifecycleTests: XCTestCase {
             if await probe.maximum > 0 { break }
             try await Task.sleep(nanoseconds: 20_000_000)
         }
+        let entered = await probe.maximum
+        guard entered > 0 else {
+            operation.cancel()
+            _ = try? await operation.value
+            XCTFail("Fixture did not acquire its lease within five seconds")
+            return
+        }
         await manager.handleThermalStateChange(.critical)
         do {
             _ = try await operation.value

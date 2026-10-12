@@ -190,7 +190,7 @@ final class MeetingDetailViewModel: ObservableObject {
         pendingSeekSeconds = seconds
         await preparePlayback()
         guard let pendingSeekSeconds else { return }
-        player?.seek(to: CMTime(seconds: pendingSeekSeconds, preferredTimescale: 600))
+        _ = await player?.seek(to: CMTime(seconds: pendingSeekSeconds, preferredTimescale: 600))
         player?.play()
     }
 

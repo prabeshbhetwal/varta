@@ -77,7 +77,7 @@ final class RecordingControlsViewModel: ObservableObject {
         do {
             errorMessage = nil
             let checkpoint = try await Checkpointer(storageService: storageService).latestRecordingCheckpoint(jobID: jobID)
-            guard let meetingID = try await storageService.job(id: jobID)?.meetingID else { throw RecorderError.noCoordinatorState }
+            guard let meetingID = try await storageService.job(id: jobID)?.meetingID else { throw RecorderCoordinator.RecorderError.noCoordinatorState }
             let files = try await storageService.importedMedia(for: meetingID)
             let sources = Self.recoveredAudioSources(checkpoint: checkpoint, media: files, jobID: jobID)
             captureMicrophone = sources.microphone

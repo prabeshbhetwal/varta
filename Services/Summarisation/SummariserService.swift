@@ -206,7 +206,7 @@ actor SummariserService {
         return (0..<count).compactMap { index in
             let start = max(0, Double(index * 600) - 30)
             let end = Double((index + 1) * 600)
-            let text = segments.filter { $0.endSeconds >= start && $0.startSeconds < end }.map { segment in
+            let text: String = segments.filter { $0.endSeconds >= start && $0.startSeconds < end }.map { segment -> String in
                 let corrected = applyGlossary(text: segment.effectiveText, languageHint: LanguageMode(rawValue: segment.languageTag ?? ""), terms: glossary)
                 return "[\(segment.startSeconds)-\(segment.endSeconds)] \(corrected)"
             }.joined(separator: "\n")

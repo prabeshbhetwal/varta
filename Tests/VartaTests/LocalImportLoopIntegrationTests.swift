@@ -103,7 +103,7 @@ final class LocalImportLoopIntegrationTests: XCTestCase {
         await detail.refresh()
         let rowIDs = detail.segments.map(\.id)
         let isolatedDatabase = try DatabaseQueue(path: databaseURL.path)
-        try isolatedDatabase.write { db in try db.execute(sql: "DROP TABLE audio_files") }
+        try await isolatedDatabase.write { db in try db.execute(sql: "DROP TABLE audio_files") }
         await detail.refreshMedia()
         XCTAssertEqual(detail.segments.map(\.id), rowIDs)
         XCTAssertEqual(detail.segments.first?.effectiveText, "Keep editor row")
@@ -195,8 +195,8 @@ final class LocalImportLoopIntegrationTests: XCTestCase {
         let source = try makeSampleMediaFile()
         let copied = try await storage.importMediaFile(sourceURL: source, meetingID: meetingID)
         try await storage.registerImportedMedia(meetingID: meetingID, relativePath: copied.relativePath,
-            originalFilename: source.lastPathComponent, format: "wav", durationSeconds: 1, sampleRateHz: 16_000,
-            channelCount: 1, source: "microphone", segmentIndex: segmentIndex, timelineOffsetSeconds: timelineOffset ?? Double(segmentIndex))
+            originalFilename: source.lastPathComponent, format: "wav", durationSeconds: 1,
+            source: "microphone", segmentIndex: segmentIndex, timelineOffsetSeconds: timelineOffset ?? Double(segmentIndex))
     }
 
     private func temporaryDatabaseURL() -> URL {

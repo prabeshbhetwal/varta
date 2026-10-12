@@ -80,6 +80,17 @@ final class StorageWorkflowTests: XCTestCase {
         XCTAssertFalse(completed)
     }
 
+    func testCalendarIdentityDistinguishesEventsAndDelimiterText() {
+        let first = CalendarCandidate(title: "Review A", dateHint: "tomorrow", durationMinutes: 30, reason: "Explicit", sourceQuote: "Review A and B tomorrow")
+        let second = CalendarCandidate(title: "Review B", dateHint: "tomorrow", durationMinutes: 30, reason: "Explicit", sourceQuote: first.sourceQuote)
+        let longer = CalendarCandidate(title: first.title, dateHint: first.dateHint, durationMinutes: 60, reason: first.reason, sourceQuote: first.sourceQuote)
+        XCTAssertNotEqual(first.id, second.id)
+        XCTAssertNotEqual(first.id, longer.id)
+        let pipeOne = CalendarCandidate(title: "Review", dateHint: "b|c", durationMinutes: nil, reason: "", sourceQuote: "a")
+        let pipeTwo = CalendarCandidate(title: "Review", dateHint: "c", durationMinutes: nil, reason: "", sourceQuote: "a|b")
+        XCTAssertNotEqual(pipeOne.id, pipeTwo.id)
+    }
+
     func testMissingOrInvalidLocalModelsFailValidation() throws {
         let manifest = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("Models/model-manifest.json")

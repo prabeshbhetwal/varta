@@ -30,7 +30,8 @@ actor SummariserService {
         let meeting = try await storageService.listMeetings().first { $0.id == meetingID }
         let date = meeting.map { ISO8601DateFormatter().string(from: $0.createdAt) } ?? ""
         let windows = try Self.windows(segments: segments, glossary: glossary)
-        let fingerprint = try Self.fingerprint(windows: windows, meetingDate: date, root: root)
+        let prompts = try PromptTemplateService.snapshot(appSupportDirectoryURL: root)
+        let fingerprint = try Self.fingerprint(windows: windows, meetingDate: date, prompts: prompts)
         let recovered = try await matchingCheckpoint(meetingID: meetingID, revision: revision, fingerprint: fingerprint, windows: windows)
         let checkpoint = recovered?.checkpoint ?? Checkpoint(transcriptRevision: revision, inputFingerprint: fingerprint)
         let jobID: String
@@ -46,11 +47,12 @@ actor SummariserService {
             return try await memoryManager.runExclusive(family: .summariser) {
                 do {
                     try await self.storageService.updateJobStatus(id: jobID, status: .running)
-                    let result = try await self.generate(windows: windows, meetingDate: date, root: root, jobID: jobID, checkpoint: checkpoint)
+                    let result = try await self.generate(windows: windows, meetingDate: date, prompts: prompts, jobID: jobID, checkpoint: checkpoint)
                     try Task.checkCancellation()
                     let latestGlossary = try await self.storageService.glossaryTerms()
                     let latestWindows = try Self.windows(segments: segments, glossary: latestGlossary)
-                    guard try Self.fingerprint(windows: latestWindows, meetingDate: date, root: root) == fingerprint else {
+                    let latestPrompts = try PromptTemplateService.snapshot(appSupportDirectoryURL: root)
+                    guard try Self.fingerprint(windows: latestWindows, meetingDate: date, prompts: latestPrompts) == fingerprint else {
                         throw LocalModelError.invalidOutput("Prompts or glossary changed during generation. Generate again with current settings.")
                     }
                     try await self.storageService.saveMeetingOutputs(meetingID: meetingID, outputs: result, expectedTranscriptRevision: revision, jobID: jobID)
@@ -67,19 +69,19 @@ actor SummariserService {
         }
     }
 
-    private func generate(windows: [String], meetingDate: String, root: URL, jobID: String, checkpoint initial: Checkpoint) async throws -> MeetingOutputs {
+    private func generate(windows: [String], meetingDate: String, prompts: [PromptTemplate: String], jobID: String, checkpoint initial: Checkpoint) async throws -> MeetingOutputs {
         var checkpoint = initial
         let types: [(GeneratedOutputType, PromptTemplate)] = [
             (.actionItems, .actionItems), (.decisions, .decisions), (.unresolvedQuestions, .unresolvedQuestions)
         ]
         for window in windows.dropFirst(checkpoint.summaries.count) {
             try Task.checkCancellation()
-            let summary = try await run(.windowSummary, context: ["transcript": window], root: root)
+            let summary = try await run(.windowSummary, context: ["transcript": window], prompts: prompts)
             var extraction: [GeneratedOutputType: String] = [:]
             for (type, prompt) in types {
-                extraction[type] = try await run(prompt, context: ["transcript": window], root: root)
+                extraction[type] = try await run(prompt, context: ["transcript": window], prompts: prompts)
             }
-            let raw = try await run(.calendarCandidates, context: ["transcript": window, "meeting_date": meetingDate], root: root)
+            let raw = try await run(.calendarCandidates, context: ["transcript": window, "meeting_date": meetingDate], prompts: prompts)
             let proposed = try JSONDecoder().decode([CalendarCandidate].self, from: Self.jsonData(raw))
             for candidate in proposed {
                 try candidate.validate()
@@ -91,7 +93,7 @@ actor SummariserService {
             checkpoint.summaries.append(summary)
             for (type, _) in types { checkpoint.extracted[type, default: []].append(extraction[type] ?? "") }
             for candidate in proposed {
-                if !checkpoint.candidates.contains(candidate) { checkpoint.candidates.append(candidate) }
+                if !checkpoint.candidates.contains(where: { $0.id == candidate.id }) { checkpoint.candidates.append(candidate) }
             }
             try await persist(checkpoint, jobID: jobID, windowCount: windows.count)
         }
@@ -99,10 +101,10 @@ actor SummariserService {
         for sectionIndex in checkpoint.sections.count..<sectionCount {
             let index = sectionIndex * 3
             let text = checkpoint.summaries[index..<min(index + 3, checkpoint.summaries.count)].joined(separator: "\n\n")
-            checkpoint.sections.append(try await run(.sectionSynthesis, context: ["window_summaries": text], root: root))
+            checkpoint.sections.append(try await run(.sectionSynthesis, context: ["window_summaries": text], prompts: prompts))
             try await persist(checkpoint, jobID: jobID, windowCount: windows.count)
         }
-        let raw = try await run(.finalSummary, context: ["section_summaries": try await boundedSynthesis(checkpoint.sections, root: root)], root: root)
+        let raw = try await run(.finalSummary, context: ["section_summaries": try await boundedSynthesis(checkpoint.sections, prompts: prompts)], prompts: prompts)
         let summary = try JSONDecoder().decode(SummaryContent.self, from: Self.jsonData(raw))
         guard [summary.concise, summary.detailed, summary.bullets].allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
             throw LocalModelError.invalidOutput("Final summary requires concise, detailed and bullet text.")
@@ -110,8 +112,8 @@ actor SummariserService {
         var outputs = types.map { type, _ in
             GeneratedOutput(type: type, language: .english, content: (checkpoint.extracted[type] ?? []).joined(separator: "\n\n"))
         }
-        let emailContext = try await boundedSynthesis(outputs.map(\.content), root: root)
-        outputs.append(GeneratedOutput(type: .followUpEmail, language: .english, content: try await run(.followUpEmail, context: ["summary": summary.concise, "extracted_outputs": emailContext], root: root)))
+        let emailContext = try await boundedSynthesis(outputs.map(\.content), prompts: prompts)
+        outputs.append(GeneratedOutput(type: .followUpEmail, language: .english, content: try await run(.followUpEmail, context: ["summary": summary.concise, "extracted_outputs": emailContext], prompts: prompts)))
         outputs.append(GeneratedOutput(type: .calendarCandidates, language: .english, content: String(decoding: try JSONEncoder().encode(checkpoint.candidates), as: UTF8.self)))
         outputs += [
             GeneratedOutput(type: .summaryConcise, language: .english, content: summary.concise),
@@ -161,15 +163,16 @@ actor SummariserService {
         try await storageService.updateJobStatus(id: jobID, status: status, progress: progress, errorMessage: nil)
     }
 
-    private nonisolated static func fingerprint(windows: [String], meetingDate: String, root: URL) throws -> String {
-        let prompts = try PromptTemplate.allCases.map {
-            try PromptTemplateService.render($0, context: [:], appSupportDirectoryURL: root)
+    private nonisolated static func fingerprint(windows: [String], meetingDate: String, prompts: [PromptTemplate: String]) throws -> String {
+        let instructions = try PromptTemplate.allCases.map { template -> String in
+            guard let instruction = prompts[template] else { throw LocalModelError.missingAsset("Prompt: \(template.filename)") }
+            return instruction
         }
-        let data = try JSONEncoder().encode([meetingDate] + windows + prompts)
+        let data = try JSONEncoder().encode([meetingDate] + windows + instructions)
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
-    private func boundedSynthesis(_ values: [String], root: URL) async throws -> String {
+    private func boundedSynthesis(_ values: [String], prompts: [PromptTemplate: String]) async throws -> String {
         var current = values
         for _ in 0..<5 {
             let combined = current.joined(separator: "\n\n")
@@ -178,16 +181,16 @@ actor SummariserService {
             for index in stride(from: 0, to: current.count, by: 3) {
                 reduced.append(try await run(.sectionSynthesis, context: [
                     "section_summaries": current[index..<min(index + 3, current.count)].joined(separator: "\n\n")
-                ], root: root))
+                ], prompts: prompts))
             }
             current = reduced
         }
         throw LocalModelError.invalidOutput("Meeting content exceeds the bounded synthesis context.")
     }
 
-    private func run(_ template: PromptTemplate, context: [String: String], root: URL) async throws -> String {
+    private func run(_ template: PromptTemplate, context: [String: String], prompts: [PromptTemplate: String]) async throws -> String {
         try Task.checkCancellation()
-        let response = try await client.generate(prompt: PromptTemplateService.render(template, context: context, appSupportDirectoryURL: root))
+        let response = try await client.generate(prompt: PromptTemplateService.render(template, context: context, snapshot: prompts))
         let text = response.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { throw LocalModelError.invalidOutput("Empty response for \(template.rawValue).") }
         return text

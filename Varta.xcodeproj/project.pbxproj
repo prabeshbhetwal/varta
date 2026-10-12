@@ -581,7 +581,7 @@
 			mainGroup = GR3000000000000000000000;
 			packageReferences = (
 				PK6000000000000000000000 /* XCRemoteSwiftPackageReference "GRDB" */,
-				PK6030000000000000000000 /* XCRemoteSwiftPackageReference "mlx-swift-lm" */,
+				PK6030000000000000000000 /* XCRemoteSwiftPackageReference "mlx-swift-examples" */,
 				PK6040000000000000000000 /* XCRemoteSwiftPackageReference "mlx-swift" */,
 				PK6050000000000000000000 /* XCRemoteSwiftPackageReference "swift-transformers" */,
 			);
@@ -969,10 +969,10 @@
 				minimumVersion = 7.0.0;
 			};
 		};
-		PK6030000000000000000000 /* XCRemoteSwiftPackageReference "mlx-swift-lm" */ = {
+		PK6030000000000000000000 /* XCRemoteSwiftPackageReference "mlx-swift-examples" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/ml-explore/mlx-swift-lm";
-			requirement = {kind = exactVersion; version = 2.21.2; };
+			repositoryURL = "https://github.com/ml-explore/mlx-swift-examples";
+			requirement = {kind = revision; revision = 6ef303b84ec69e2e1e1da68f2059e99ee1dcef4d; }; /* 2.21.2, complete upstream tree */
 		};
 		PK6040000000000000000000 /* XCRemoteSwiftPackageReference "mlx-swift" */ = {
 			isa = XCRemoteSwiftPackageReference;

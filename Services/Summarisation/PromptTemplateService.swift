@@ -52,6 +52,8 @@ enum PromptTemplateService {
             return fallback
         }
 
+        let size = try promptURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+        guard size <= 64_000 else { throw LocalModelError.invalidOutput("Prompt \(template.filename) exceeds 64 KB.") }
         let text = try String(contentsOf: promptURL, encoding: .utf8)
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw LocalModelError.invalidOutput("Prompt \(template.filename) is empty.")
@@ -60,8 +62,27 @@ enum PromptTemplateService {
     }
 
     static func render(_ template: PromptTemplate, context: [String: String], appSupportDirectoryURL: URL) throws -> String {
-        let instruction = try loadPrompt(for: template, appSupportDirectoryURL: appSupportDirectoryURL)
+        try render(instruction: instruction(for: template, appSupportDirectoryURL: appSupportDirectoryURL), context: context)
+    }
+
+    static func snapshot(appSupportDirectoryURL: URL) throws -> [PromptTemplate: String] {
+        try Dictionary(uniqueKeysWithValues: PromptTemplate.allCases.map {
+            ($0, try instruction(for: $0, appSupportDirectoryURL: appSupportDirectoryURL))
+        })
+    }
+
+    static func render(_ template: PromptTemplate, context: [String: String], snapshot: [PromptTemplate: String]) throws -> String {
+        guard let instruction = snapshot[template] else { throw LocalModelError.missingAsset("Prompt: \(template.filename)") }
+        return try render(instruction: instruction, context: context)
+    }
+
+    private static func render(instruction: String, context: [String: String]) throws -> String {
         let data = try JSONEncoder().encode(context)
+        return instruction + "\n\n" + String(decoding: data, as: UTF8.self)
+    }
+
+    private static func instruction(for template: PromptTemplate, appSupportDirectoryURL: URL) throws -> String {
+        let instruction = try loadPrompt(for: template, appSupportDirectoryURL: appSupportDirectoryURL)
         var contract = ""
         if template == .finalSummary || template == .calendarCandidates {
             let bundled = bundledPromptContent(for: template, bundle: .main)
@@ -71,7 +92,7 @@ enum PromptTemplateService {
             // Keep custom/older prompt files; the bundled schema remains an invariant.
             contract = "\n\n" + bundled
         }
-        return instruction + contract + "\n\n" + String(decoding: data, as: UTF8.self)
+        return instruction + contract
     }
 
     private static func bundledPromptContent(for template: PromptTemplate, bundle: Bundle) -> String {

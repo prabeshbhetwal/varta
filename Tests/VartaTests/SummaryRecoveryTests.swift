@@ -83,6 +83,71 @@ final class SummaryRecoveryTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: prompt), "window-summary updated fixture")
     }
 
+    func testTransientPromptChangeUsesFrozenSnapshotAndResumesOriginalFingerprint() async throws {
+        let (storage, meeting) = try await fixture(windowCount: 2)
+        let root = await storage.appSupportDirectory()
+        let prompt = root.appendingPathComponent("Prompts/window-summary.txt")
+        let original = try String(contentsOf: prompt, encoding: .utf8)
+        let client = RecoveryModelFixture(failSection: 1, onWindow: { call in
+            let content = call == 1 ? "window-summary changed during generation" : original
+            try content.write(to: prompt, atomically: true, encoding: .utf8)
+        })
+        do {
+            _ = try await SummariserService(storageService: storage, memoryManager: MemoryManager(), client: client)
+                .summariseMeeting(meetingID: meeting)
+            XCTFail("Section fixture should interrupt after both windows")
+        } catch RecoveryModelFixture.Failure.interrupted { }
+        let windowPrompts = await client.windowPrompts
+        XCTAssertEqual(windowPrompts.count, 2)
+        XCTAssertTrue(windowPrompts.allSatisfy { $0.hasPrefix(original + "\n\n") })
+        let failed = try await storage.jobs(statuses: [.failed], type: .summarisation)
+        let jobID = try XCTUnwrap(failed.first?.id)
+        let resumed = RecoveryModelFixture()
+        _ = try await SummariserService(storageService: storage, memoryManager: MemoryManager(), client: resumed)
+            .summariseMeeting(meetingID: meeting)
+        let resumedWindows = await resumed.windowCalls
+        XCTAssertEqual(resumedWindows, 0, "Original prompt fingerprint must match the completed checkpoint windows")
+        let completed = try await storage.job(id: jobID)
+        XCTAssertEqual(completed?.status, .completed)
+        XCTAssertEqual(try String(contentsOf: prompt, encoding: .utf8), original)
+    }
+
+    func testLastingPromptChangeRejectsOutputsFromFrozenSnapshot() async throws {
+        let (storage, meeting) = try await fixture(windowCount: 2)
+        try await savePrevious(storage, meeting: meeting)
+        let root = await storage.appSupportDirectory()
+        let prompt = root.appendingPathComponent("Prompts/window-summary.txt")
+        let client = RecoveryModelFixture(onWindow: { call in
+            if call == 1 {
+                try "window-summary changed during generation".write(to: prompt, atomically: true, encoding: .utf8)
+            }
+        })
+        do {
+            _ = try await SummariserService(storageService: storage, memoryManager: MemoryManager(), client: client)
+                .summariseMeeting(meetingID: meeting)
+            XCTFail("A lasting prompt change must reject saved outputs")
+        } catch LocalModelError.invalidOutput { }
+        let previous = try await storage.summary(meetingID: meeting)
+        XCTAssertEqual(previous?.concise, "Previous content")
+        let windowPrompts = await client.windowPrompts
+        XCTAssertTrue(windowPrompts.allSatisfy { $0.hasPrefix("window-summary\n\n") })
+    }
+
+    func testOversizedExternalPromptIsRejectedBeforeGeneration() async throws {
+        let (storage, meeting) = try await fixture(windowCount: 1)
+        let root = await storage.appSupportDirectory()
+        let prompt = root.appendingPathComponent("Prompts/window-summary.txt")
+        try String(repeating: "x", count: 64_001).write(to: prompt, atomically: true, encoding: .utf8)
+        let client = RecoveryModelFixture()
+        do {
+            _ = try await SummariserService(storageService: storage, memoryManager: MemoryManager(), client: client)
+                .summariseMeeting(meetingID: meeting)
+            XCTFail("Oversized prompt should be rejected")
+        } catch LocalModelError.invalidOutput { }
+        let calls = await client.windowCalls
+        XCTAssertEqual(calls, 0)
+    }
+
     func testQueuedCancellationPausesJobWithoutUnloadingOtherLease() async throws {
         let (storage, meeting) = try await fixture(windowCount: 1)
         let manager = MemoryManager()
@@ -168,15 +233,20 @@ private actor RecoveryModelFixture: LocalLanguageModelClient {
     private(set) var windowCalls = 0
     private(set) var sectionCalls = 0
     private(set) var unloaded = false
+    private(set) var windowPrompts: [String] = []
+    private let onWindow: (@Sendable (Int) async throws -> Void)?
 
-    init(failWindow: Int? = nil, failSection: Int? = nil) {
+    init(failWindow: Int? = nil, failSection: Int? = nil, onWindow: (@Sendable (Int) async throws -> Void)? = nil) {
         self.failWindow = failWindow
         self.failSection = failSection
+        self.onWindow = onWindow
     }
 
     func generate(prompt: String) async throws -> String {
         if prompt.hasPrefix("window-summary") {
             windowCalls += 1
+            windowPrompts.append(prompt)
+            try await onWindow?(windowCalls)
             if windowCalls == failWindow { throw Failure.interrupted }
         }
         if prompt.hasPrefix("section-synthesis") {

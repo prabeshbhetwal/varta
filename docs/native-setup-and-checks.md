@@ -25,9 +25,13 @@ native module; native transcription then reports an engine error. Source prepara
 never overwrites a divergent existing framework. Use a fresh build output directory
 when changing framework versions.
 
-Swift package versions are exact: mlx-swift-lm 2.21.2, mlx-swift 0.21.2 and
-swift-transformers 0.1.13; GRDB retains the existing major-version requirement.
-[MLX API source](https://github.com/ml-explore/mlx-swift-lm/tree/2.21.2) and
+The MLX LM package uses the original official mlx-swift-examples 2.21.2 source at
+immutable revision 6ef303b84ec69e2e1e1da68f2059e99ee1dcef4d. The later split repository's
+same old tag references directories removed from its history and fails package
+resolution; the original package contains them and identical model APIs.
+mlx-swift 0.21.2 and swift-transformers 0.1.13 are exact; GRDB retains its existing
+major-version requirement.
+[MLX API source](https://github.com/ml-explore/mlx-swift-examples/tree/2.21.2) and
 [whisper C API](https://github.com/ggml-org/whisper.cpp/blob/v1.8.3/include/whisper.h)
 define the adapters.
 

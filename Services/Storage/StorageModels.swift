@@ -103,7 +103,10 @@ struct TranscriptSearchResult: Identifiable, Sendable {
 }
 
 struct CalendarCandidate: Codable, Hashable, Identifiable, Sendable {
-    var id: String { sourceQuote + "|" + (dateHint ?? "") }
+    var id: String {
+        let fields = [title, dateHint ?? "", durationMinutes.map { String($0) } ?? "", sourceQuote]
+        return fields.map { "\($0.utf8.count):\($0)" }.joined()
+    }
     let title: String
     let dateHint: String?
     let durationMinutes: Double?

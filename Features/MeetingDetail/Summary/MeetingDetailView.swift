@@ -3,15 +3,17 @@ import SwiftUI
 struct MeetingDetailView: View {
     let meetingID: String
     let storageService: StorageService
+    let contentRevision: Int
     let requestedSegmentID: Int64?
     let requestedSeekSeconds: Double?
 
     @StateObject private var viewModel: MeetingDetailViewModel
     @State private var selectedTab = "summary"
 
-    init(meetingID: String, storageService: StorageService, memoryManager: MemoryManager, requestedSegmentID: Int64? = nil, requestedSeekSeconds: Double? = nil) {
+    init(meetingID: String, storageService: StorageService, memoryManager: MemoryManager, contentRevision: Int = 0, requestedSegmentID: Int64? = nil, requestedSeekSeconds: Double? = nil) {
         self.meetingID = meetingID
         self.storageService = storageService
+        self.contentRevision = contentRevision
         self.requestedSegmentID = requestedSegmentID
         self.requestedSeekSeconds = requestedSeekSeconds
         _viewModel = StateObject(
@@ -50,11 +52,16 @@ struct MeetingDetailView: View {
             }
         }
         .padding(16)
+        .onAppear { viewModel.activatePlayback() }
         .task(id: requestedSegmentID) {
             await viewModel.refresh()
             guard let seconds = requestedSeekSeconds else { return }
             selectedTab = "transcript"
             await viewModel.seek(to: seconds)
+        }
+        .task(id: contentRevision) {
+            guard contentRevision > 0 else { return }
+            await viewModel.refreshMedia()
         }
         .onDisappear {
             viewModel.stopPlayback()

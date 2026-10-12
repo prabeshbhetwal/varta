@@ -48,10 +48,7 @@ final class RecordingControlsViewModel: ObservableObject {
             guard let self else { return }
             try? await Task.sleep(nanoseconds: 150_000_000)
             while !Task.isCancelled {
-                let snapshot = await recorderCoordinator.currentSnapshot()
-                if self.snapshot != snapshot {
-                    self.snapshot = snapshot
-                }
+                await self.refreshSnapshot()
                 try? await Task.sleep(nanoseconds: 500_000_000)
             }
         }
@@ -63,7 +60,12 @@ final class RecordingControlsViewModel: ObservableObject {
     }
 
     func refreshSnapshot() async {
-        snapshot = await recorderCoordinator.currentSnapshot()
+        let latest = await recorderCoordinator.currentSnapshot()
+        if snapshot != latest { snapshot = latest }
+        while let completion = await recorderCoordinator.takeCompletedRecording() {
+            userMessage = "Recording saved locally and added to recordings."
+            onRecordingSaved(completion.meetingID)
+        }
     }
 
     func startMicrophoneRecording() {
@@ -84,7 +86,7 @@ final class RecordingControlsViewModel: ObservableObject {
             captureSystemAudio = sources.system
             try await recorderCoordinator.restoreInterruptedRecording(jobID: jobID)
             await refreshSnapshot()
-            userMessage = "Completed audio recovered. Choose Resume or Stop; capture remains paused."
+            userMessage = "Recording session recovered. Choose audio sources, then Resume or Stop; capture remains paused."
         } catch {
             errorMessage = "Recording recovery failed: \(error.localizedDescription)"
         }
@@ -142,6 +144,10 @@ final class RecordingControlsViewModel: ObservableObject {
     }
 
     func resumeRecording() {
+        guard captureMicrophone || captureSystemAudio else {
+            errorMessage = RecorderCoordinator.RecorderError.missingAudioInput.localizedDescription
+            return
+        }
         Task {
             do {
                 errorMessage = nil
@@ -172,14 +178,12 @@ final class RecordingControlsViewModel: ObservableObject {
                 return
             }
 
-            let savedMeetingID = beforeStop.meetingID
             await recorderCoordinator.stopRecording()
-            let latest = await recorderCoordinator.currentSnapshot()
-            snapshot = latest
+            await refreshSnapshot()
+            let latest = snapshot
 
             if latest.state == .completed {
                 userMessage = "Recording saved locally and added to recordings."
-                onRecordingSaved(savedMeetingID)
             } else if latest.state == .failed {
                 userMessage = nil
                 errorMessage = latest.note ?? "Recording failed. Check permissions and try again."

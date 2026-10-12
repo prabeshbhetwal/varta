@@ -108,6 +108,7 @@ private struct HomeContentView: View {
         } detail: {
             if let meetingID = viewModel.selectedMeetingID {
                 MeetingDetailView(meetingID: meetingID, storageService: storageService, memoryManager: memoryManager,
+                                  contentRevision: viewModel.meetingContentRevisions[meetingID, default: 0],
                                   requestedSegmentID: viewModel.selectedSearchResult?.meetingID == meetingID ? viewModel.selectedSearchResult?.id : nil,
                                   requestedSeekSeconds: viewModel.selectedSearchResult?.meetingID == meetingID ? viewModel.selectedSearchResult?.startSeconds : nil)
                     .id(meetingID)
@@ -223,6 +224,12 @@ private struct RecordingToolbarControls: ToolbarContent {
                 }
                 .help("Stop recording")
             case .paused:
+                Menu {
+                    Toggle("Microphone", isOn: $viewModel.captureMicrophone)
+                    Toggle("System Audio", isOn: $viewModel.captureSystemAudio)
+                } label: {
+                    Label("Audio Sources", systemImage: "slider.horizontal.3")
+                }
                 Text(formatted(seconds: viewModel.snapshot.totalRecordedSeconds))
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
@@ -233,6 +240,7 @@ private struct RecordingToolbarControls: ToolbarContent {
                     Label("Resume", systemImage: "play.fill")
                 }
                 .help("Resume recording")
+                .disabled(!viewModel.captureMicrophone && !viewModel.captureSystemAudio)
 
                 Button {
                     viewModel.stopRecording()
@@ -280,6 +288,7 @@ private struct RecordingStatusFooter: View {
                         Button("Resume") {
                             viewModel.resumeRecording()
                         }
+                        .disabled(!viewModel.captureMicrophone && !viewModel.captureSystemAudio)
                     }
 
                     Button("Stop", role: .destructive) {

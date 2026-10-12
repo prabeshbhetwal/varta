@@ -43,7 +43,7 @@ struct RecordingControlsView: View {
                 Button("Resume") {
                     viewModel.resumeRecording()
                 }
-                .disabled(viewModel.snapshot.state != .paused)
+                .disabled(viewModel.snapshot.state != .paused || (!viewModel.captureMicrophone && !viewModel.captureSystemAudio))
 
                 Button("Stop", role: .destructive) {
                     viewModel.stopRecording()

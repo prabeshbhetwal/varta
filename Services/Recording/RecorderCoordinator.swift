@@ -3,10 +3,18 @@ import CoreGraphics
 import Foundation
 
 actor RecorderCoordinator {
-    enum RecorderError: Error {
+    enum RecorderError: LocalizedError {
         case missingAudioInput
         case noCoordinatorState
         case invalidRecordingConfiguration
+
+        var errorDescription: String? {
+            switch self {
+            case .missingAudioInput: return "Choose at least one audio source before starting or resuming."
+            case .noCoordinatorState: return "No recoverable recording session is available."
+            case .invalidRecordingConfiguration: return "Recording cannot start or resume in its current state or beyond its four-hour limit."
+            }
+        }
     }
 
     private struct ActiveSession {
@@ -53,6 +61,8 @@ actor RecorderCoordinator {
     private var onBattery = false
 
     private var activeSession: ActiveSession?
+    private var completedSession: ActiveSession?
+    private var pendingCompletions: [(meetingID: String, jobID: String)] = []
     private var checkpointTask: Task<Void, Never>?
     private var resumeIntent: ResumeIntent = .none
     private var isHandlingWriterFailure = false
@@ -73,20 +83,21 @@ actor RecorderCoordinator {
 
     func currentSnapshot() async -> RecorderStatusSnapshot {
         let canRunHeavy = await memoryManager.currentRuntimeMode() != .paused
+        let session = activeSession ?? (state == .completed ? completedSession : nil)
         let recordedSeconds: Double
         if let activeSession {
             recordedSeconds = activeSession.totalRecordedSeconds + activeSegmentElapsedSeconds(activeSession)
         } else {
-            recordedSeconds = 0
+            recordedSeconds = session?.totalRecordedSeconds ?? 0
         }
 
         return RecorderStatusSnapshot(
             state: state,
-            meetingID: activeSession?.meetingID,
-            jobID: activeSession?.jobID,
-            segmentCount: activeSession?.segmentRelativePaths.count ?? 0,
+            meetingID: session?.meetingID,
+            jobID: session?.jobID,
+            segmentCount: session?.segmentRelativePaths.count ?? 0,
             totalRecordedSeconds: recordedSeconds,
-            startedAt: activeSession?.startedAt,
+            startedAt: session?.startedAt,
             onBattery: onBattery,
             thermalState: thermalState,
             canRunHeavyProcessing: canRunHeavy,
@@ -94,8 +105,15 @@ actor RecorderCoordinator {
         )
     }
 
+    func takeCompletedRecording() -> (meetingID: String, jobID: String)? {
+        guard !pendingCompletions.isEmpty else { return nil }
+        return pendingCompletions.removeFirst()
+    }
+
     func restoreInterruptedRecording(jobID: String) async throws {
         guard state == .idle || state == .failed || state == .completed else { throw RecorderError.noCoordinatorState }
+        completedSession = nil
+        captureClock = nil
         state = .starting
         do {
         guard let job = try await jobQueue.recordingJob(id: jobID), job.jobType == .recording,
@@ -133,9 +151,11 @@ actor RecorderCoordinator {
         }
 
         guard configuration.captureMicrophone || configuration.captureSystemAudio else {
-            throw RecorderError.invalidRecordingConfiguration
+            throw RecorderError.missingAudioInput
         }
 
+        completedSession = nil
+        captureClock = nil
         state = .starting
         note = "Preparing capture devices"
 
@@ -158,6 +178,8 @@ actor RecorderCoordinator {
             hasLoggedInvalidBuffer = false
             pendingWriterFailure = nil
 
+            // Persist source choices before opening devices; the first chunk may never finish.
+            try await saveCheckpoint(reason: .periodic)
             try await startNewSegment(captureMicrophone: configuration.captureMicrophone, captureSystemAudio: configuration.captureSystemAudio)
             startCheckpointLoop()
             state = .recording
@@ -210,15 +232,20 @@ actor RecorderCoordinator {
         guard activeSession.totalRecordedSeconds < 14_400 else {
             throw RecorderError.invalidRecordingConfiguration
         }
+        let micSetting = captureMicrophone ?? activeSession.captureMicrophone
+        let systemSetting = captureSystemAudio ?? activeSession.captureSystemAudio
+        guard micSetting || systemSetting else {
+            note = RecorderError.missingAudioInput.localizedDescription
+            throw RecorderError.missingAudioInput
+        }
 
         state = .starting
         note = "Resuming recording"
         pendingWriterFailure = nil
-        let micSetting = captureMicrophone ?? activeSession.captureMicrophone
-        let systemSetting = captureSystemAudio ?? activeSession.captureSystemAudio
         self.activeSession?.captureMicrophone = micSetting
         self.activeSession?.captureSystemAudio = systemSetting
         do {
+            try await saveCheckpoint(reason: .wakeResume)
             try await startNewSegment(captureMicrophone: micSetting, captureSystemAudio: systemSetting)
         } catch {
             do { try await stopInputsAndCloseWriter() }
@@ -279,12 +306,21 @@ actor RecorderCoordinator {
         do { try await jobQueue.completeRecordingJob(jobID: activeSession.jobID) }
         catch { await failPersistence(error); return }
 
+        completedSession = activeSession
+        pendingCompletions.append((activeSession.meetingID, activeSession.jobID))
         self.activeSession = nil
         state = .completed
         note = "Recording saved"
         isHandlingWriterFailure = false
         hasLoggedFormatMismatch = false
         hasLoggedInvalidBuffer = false
+    }
+
+    func stopRecordingAtDurationLimitIfNeeded() async -> Bool {
+        guard state == .recording || state == .paused,
+              captureClock?.hasReachedLimit() == true || (activeSession?.totalRecordedSeconds ?? 0) >= 14_400 else { return false }
+        await stopRecording()
+        return true
     }
 
     func handleWillSleep() async {
@@ -620,17 +656,10 @@ actor RecorderCoordinator {
                 } catch {
                     return
                 }
-                if await self.captureClock?.hasReachedLimit() == true {
-                    await self.stopRecording()
-                    return
-                }
+                if await self.stopRecordingAtDurationLimitIfNeeded() { return }
                 do { try await self.rotateChunk() }
                 catch { await self.failPersistence(error); return }
-                let totalSeconds = await self.activeSession?.totalRecordedSeconds ?? 0
-                if totalSeconds >= 14_400 {
-                    await self.stopRecording()
-                    return
-                }
+                if await self.stopRecordingAtDurationLimitIfNeeded() { return }
             }
         }
     }

@@ -13,9 +13,41 @@ struct WhisperTranscribedSegment: Sendable {
     let text: String
 }
 
+enum WhisperDecodingPolicy {
+    static func boundedContext(_ text: String) -> String {
+        let normalized = text.precomposedStringWithCanonicalMapping.trimmingCharacters(in: .whitespacesAndNewlines)
+        var tail: [Character] = []
+        var bytes = 0
+        for character in normalized.reversed().prefix(1_024) {
+            let size = String(character).utf8.count
+            guard bytes + size <= 4_096 else { break }
+            tail.append(character)
+            bytes += size
+        }
+        return String(tail.reversed()).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func hasRepetitionLoop(_ segments: [WhisperTranscribedSegment]) -> Bool {
+        let words = Array(segments.lazy.flatMap { $0.text.precomposedStringWithCanonicalMapping.lowercased().split(whereSeparator: \.isWhitespace) }
+            .prefix(4_096).map { String($0).trimmingCharacters(in: .punctuationCharacters) }.filter { !$0.isEmpty })
+        guard words.count >= 12 else { return false }
+        // Four consecutive cycles; short stutters and non-consecutive restatements remain valid.
+        for width in 3...min(32, words.count / 4) {
+            for start in 0...(words.count - width * 4) {
+                let phrase = words[start..<start + width]
+                guard Set(phrase).count >= 3 else { continue }
+                if (1..<4).allSatisfy({ cycle in
+                    phrase == words[(start + cycle * width)..<(start + (cycle + 1) * width)]
+                }) { return true }
+            }
+        }
+        return false
+    }
+}
+
 protocol WhisperCppClient: Sendable {
     func validateConfiguration() throws
-    func transcribe(mediaURL: URL, languageMode: LanguageMode) async throws -> [WhisperTranscribedSegment]
+    func transcribe(mediaURL: URL, languageMode: LanguageMode, promptContext: String) async throws -> [WhisperTranscribedSegment]
 }
 
 extension WhisperCppClient {
@@ -53,7 +85,7 @@ struct WhisperCppBridge: WhisperCppClient {
         #endif
     }
 
-    func transcribe(mediaURL: URL, languageMode: LanguageMode) async throws -> [WhisperTranscribedSegment] {
+    func transcribe(mediaURL: URL, languageMode: LanguageMode, promptContext: String = "") async throws -> [WhisperTranscribedSegment] {
         try validateConfiguration()
         try Task.checkCancellation()
         #if canImport(whisper)
@@ -75,11 +107,15 @@ struct WhisperCppBridge: WhisperCppClient {
         defer { whisper_free(context) }
         try Task.checkCancellation()
         let cancellation = WhisperCancellation()
+        let promptContext = WhisperDecodingPolicy.boundedContext(promptContext)
         return try await withTaskCancellationHandler {
             var parameters = whisper_full_default_params(WHISPER_SAMPLING_GREEDY)
             parameters.n_threads = 2
             parameters.translate = false
-            parameters.no_context = true
+            parameters.no_context = promptContext.isEmpty
+            parameters.n_max_text_ctx = promptContext.isEmpty ? 0 : 224
+            parameters.temperature = 0
+            parameters.temperature_inc = 0
             parameters.print_progress = false
             parameters.print_realtime = false
             parameters.print_timestamps = false
@@ -92,9 +128,13 @@ struct WhisperCppBridge: WhisperCppClient {
             }
             parameters.abort_callback_user_data = Unmanaged.passUnretained(cancellation).toOpaque()
             let language = languageMode == .mixed ? "auto" : languageMode.rawValue
-            let status = language.withCString { language in
-                parameters.language = language
-                return whisper_full(context, parameters, channels[0], Int32(buffer.frameLength))
+            // Both C strings remain alive until the synchronous decoder returns.
+            let status = promptContext.withCString { prompt in
+                parameters.initial_prompt = promptContext.isEmpty ? nil : prompt
+                return language.withCString { language in
+                    parameters.language = language
+                    return whisper_full(context, parameters, channels[0], Int32(buffer.frameLength))
+                }
             }
             try Task.checkCancellation()
             guard status == 0 else { throw LocalModelError.inferenceFailed("Whisper returned status \(status).") }

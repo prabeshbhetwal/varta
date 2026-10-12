@@ -32,6 +32,8 @@ final class MeetingDetailViewModel: ObservableObject {
     private var processingTask: Task<Void, Never>?
     private var playbackMediaIDs: [String] = []
     private var pendingSeekSeconds: Double?
+    private var playbackPreparationRevision = 0
+    private var isPlaybackActive = true
 
     var isProcessing: Bool { isGeneratingTranscript || isGeneratingOutputs || isTranslating }
 
@@ -72,6 +74,15 @@ final class MeetingDetailViewModel: ObservableObject {
         guard !isProcessing else { return }
         isGeneratingTranscript = true
         processingTask = Task { await generateTranscript(resumeJobID: resumeJobID) }
+    }
+
+    func refreshMedia() async {
+        do {
+            importedMedia = try await storageService.importedMedia(for: meetingID)
+            if player != nil || isPreparingPlayback { await preparePlayback() }
+        } catch {
+            errorMessage = "Recording refresh failed: \(error.localizedDescription)"
+        }
     }
 
     private func generateTranscript(resumeJobID: String?) async {
@@ -170,31 +181,56 @@ final class MeetingDetailViewModel: ObservableObject {
     func cancelProcessing() { processingTask?.cancel() }
 
     func preparePlayback() async {
-        guard !isPreparingPlayback else { return }
-        if player != nil && playbackMediaIDs == importedMedia.map(\.id) { return }
+        guard isPlaybackActive else { return }
+        let media = importedMedia
+        let mediaIDs = media.map(\.id)
+        if player != nil && playbackMediaIDs == mediaIDs { return }
+        playbackPreparationRevision += 1
+        let preparationRevision = playbackPreparationRevision
         isPreparingPlayback = true
-        defer { isPreparingPlayback = false }
+        defer { if preparationRevision == playbackPreparationRevision { isPreparingPlayback = false } }
         do {
             let root = await storageService.appSupportDirectory()
-            let item = try await MediaProcessingService.playbackItem(media: importedMedia, rootDirectory: root)
-            player?.pause()
-            player = AVPlayer(playerItem: item)
-            playbackMediaIDs = importedMedia.map(\.id)
+            let item = try await MediaProcessingService.playbackItem(media: media, rootDirectory: root)
+            try Task.checkCancellation()
+            guard isPlaybackActive, preparationRevision == playbackPreparationRevision, mediaIDs == importedMedia.map(\.id) else { return }
+            let previousTime = player?.currentTime()
+            let wasPlaying = (player?.rate ?? 0) > 0
+            if let player { player.replaceCurrentItem(with: item) }
+            else { player = AVPlayer(playerItem: item) }
+            playbackMediaIDs = mediaIDs
+            if wasPlaying { player?.play() }
+            if let previousTime, previousTime.seconds.isFinite, previousTime.seconds > 0 {
+                _ = await player?.seek(to: previousTime)
+            }
+        } catch is CancellationError {
         } catch {
+            guard preparationRevision == playbackPreparationRevision else { return }
             errorMessage = "Playback unavailable: \(error.localizedDescription)"
         }
     }
 
     func seek(to seconds: Double) async {
-        guard seconds.isFinite && seconds >= 0 else { return }
+        guard isPlaybackActive, seconds.isFinite && seconds >= 0 else { return }
         pendingSeekSeconds = seconds
         await preparePlayback()
-        guard let pendingSeekSeconds else { return }
-        _ = await player?.seek(to: CMTime(seconds: pendingSeekSeconds, preferredTimescale: 600))
-        player?.play()
+        guard isPlaybackActive, let requestedSeconds = pendingSeekSeconds, let player else { return }
+        let requestRevision = playbackPreparationRevision
+        _ = await player.seek(to: CMTime(seconds: requestedSeconds, preferredTimescale: 600))
+        guard isPlaybackActive, requestRevision == playbackPreparationRevision,
+              pendingSeekSeconds == requestedSeconds, self.player === player else { return }
+        player.play()
     }
 
-    func stopPlayback() { player?.pause() }
+    func activatePlayback() { isPlaybackActive = true }
+
+    func stopPlayback() {
+        isPlaybackActive = false
+        playbackPreparationRevision += 1
+        pendingSeekSeconds = nil
+        isPreparingPlayback = false
+        player?.pause()
+    }
 
     func output(_ type: GeneratedOutputType, language: LanguageMode = .english) -> String? {
         outputs.first { $0.type == type && $0.language == language }?.content

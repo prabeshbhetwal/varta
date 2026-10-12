@@ -2,7 +2,7 @@
 
 The existing brief requires the local loop: import/record → transcribe → review →
 summarise → translate → review/create an Apple Calendar event. Implementation
-continues on `codex/varta-readiness-2026-10-12`, retaining draft PR #1 and all
+continues on `codex/varta-readiness-2026-10-12`, retaining PR #1 and all
 pre-existing local changes. No post-MVP adapter is included.
 
 | Required slice | Owning components and callers | Acceptance evidence |
@@ -26,11 +26,11 @@ licence/access, host capacity for dependency resolution/builds/inference, unlock
 desktop and granted permissions for native UI/capture/Calendar verification, human
 bilingual benchmark labels and signing credentials for distribution.
 
-No build, model download, inference, Docker process, UI session or endurance capture
-will be launched while the reported host capacity constraint remains. Tests and
-builds authored during this continuation are queued, not passing evidence. Earlier
-12 October compilation evidence applies only to commit `4f05ade`, not subsequent
-source changes.
+No local heavy build, model download, inference, Docker process, UI session or
+endurance capture will be launched while the reported host capacity constraint
+remains. The public standard macOS workflow runs the native fixtures without model
+weights. Verification follows the exact pushed commit's check; historical green
+builds do not validate later source changes.
 
 ## Implemented source and review
 
@@ -48,8 +48,17 @@ contracts and excessive composition track counts. Recording duration accounting 
 also reviewed against PCM sample timing. These are source findings, not physical
 capture proof.
 
-Framework preparation has 22 passing Python fixtures. Swift syntax parsing,
-project references and whitespace checks pass. Native XCTest fixtures are authored;
-their execution and native type/link checks await the public macOS CI run. Actual
-model quality, physical permissions/capture, four-hour measurements and signed
-distribution remain explicit external gates.
+Follow-up source review adds initial recording-source checkpoints and source-free
+resume rejection, shared exactly-once completion notifications, same-selected
+meeting media/playback refresh with stable transcript editor identity, and playback
+lifecycle guards. Incremental ASR now carries a bounded prompt tail from validated
+job checkpoints, detects conservative repetition loops and retries once without
+context. Deterministic regressions cover these paths; real speech quality and
+rendered editor interaction remain separate acceptance checks.
+
+Framework preparation includes 29 Python fixtures. Native XCTest covers synthetic
+audio conversion, injected model orchestration, storage/recovery and Calendar
+failure paths. CI requires real Whisper/MLX module compilation, explicit Whisper
+linking and dynamic framework embedding. Consult PR #1's exact-head check for
+executed results. Actual model quality, physical permissions/capture, four-hour
+measurements and signed distribution remain explicit external gates.

@@ -80,10 +80,101 @@ final class MediaPipelineTests: XCTestCase {
         let transcript = try await resumed.transcribeMeeting(meetingID: meeting, languageMode: .english, resumeJobID: job.id)
         let resumedCalls = await resumedClient.calls
         XCTAssertEqual(resumedCalls, 1)
+        let resumedContexts = await resumedClient.contexts
+        XCTAssertEqual(resumedContexts, ["Fixture window result"])
         XCTAssertEqual(transcript.count, 2)
         XCTAssertEqual(transcript[1].startSeconds, 30, accuracy: 0.001)
         let savedJob = try await storage.job(id: job.id)
         XCTAssertEqual(savedJob?.status, .completed)
+    }
+
+    func testRollingContextStartsEmptyForEachJobAndLanguage() async throws {
+        let storage = try makeStorage()
+        let client = WindowFixtureWhisper()
+        let service = TranscriptionService(storageService: storage, memoryManager: MemoryManager(), whisperClient: client)
+        for language in [LanguageMode.english, .nepali] {
+            let meeting = try await storage.createMeeting(title: "Context fixture", languageMode: language)
+            try await addAudio(storage: storage, meetingID: meeting, name: "context.wav", duration: 31, value: 0.1)
+            _ = try await service.transcribeMeeting(meetingID: meeting, languageMode: language)
+        }
+        let contexts = await client.contexts
+        XCTAssertEqual(contexts, ["", "Fixture window result", "", "Fixture window result"])
+    }
+
+    func testContextBoundsUnicodeBytesAndRepetitionThreshold() {
+        let context = WhisperDecodingPolicy.boundedContext(String(repeating: "नेपाल English ", count: 800))
+        XCTAssertLessThanOrEqual(context.count, 1_024)
+        XCTAssertLessThanOrEqual(context.utf8.count, 4_096)
+        XCTAssertTrue(context.hasSuffix("English"))
+        XCTAssertEqual(WhisperDecodingPolicy.boundedContext("e\u{301}"), "é")
+        let phrase = "Please review invoice "
+        XCTAssertFalse(WhisperDecodingPolicy.hasRepetitionLoop([segment(String(repeating: phrase, count: 3))]))
+        XCTAssertTrue(WhisperDecodingPolicy.hasRepetitionLoop([segment(String(repeating: phrase, count: 4))]))
+        XCTAssertFalse(WhisperDecodingPolicy.hasRepetitionLoop([segment(String(repeating: "no ", count: 20))]))
+        XCTAssertFalse(WhisperDecodingPolicy.hasRepetitionLoop([segment("Please review invoice. We discuss shipping. Please review invoice. We confirm pricing. Please review invoice.")]))
+    }
+
+    func testLoopRetriesOnceWithCleanContextAndValidatesRetry() async throws {
+        let loop = segment(String(repeating: "Please review invoice ", count: 4))
+        let client = WindowFixtureWhisper(outputs: [[loop], [segment("Clean recovered speech")]])
+        let result = try await TranscriptionService.decodeWindow(client: client,
+            mediaURL: URL(fileURLWithPath: "/fixture.wav"), languageMode: .mixed,
+            promptContext: "Previous window", durationSeconds: 1)
+        XCTAssertEqual(result.map(\.text), ["Clean recovered speech"])
+        let contexts = await client.contexts
+        XCTAssertEqual(contexts, ["Previous window", ""])
+        let invalid = WindowFixtureWhisper(outputs: [[loop], [WhisperTranscribedSegment(startSeconds: 0, endSeconds: 2, text: "Invalid retry")]])
+        do {
+            _ = try await TranscriptionService.decodeWindow(client: invalid,
+                mediaURL: URL(fileURLWithPath: "/fixture.wav"), languageMode: .english,
+                promptContext: "Prior", durationSeconds: 1)
+            XCTFail("Invalid retry timestamps must not be accepted")
+        } catch TranscriptionService.TranscriptionError.invalidEngineOutput { }
+    }
+
+    func testPersistentLoopPreservesPriorTranscriptAndCompletedWindowCheckpoint() async throws {
+        let storage = try makeStorage()
+        let meeting = try await storage.createMeeting(title: "Loop fixture", languageMode: .english)
+        try await addAudio(storage: storage, meetingID: meeting, name: "loop.wav", duration: 31, value: 0.1)
+        try await storage.replaceTranscriptSegments(meetingID: meeting, segments: [
+            NewTranscriptSegment(startSeconds: 0, endSeconds: 1, text: "Prior transcript", languageTag: "en", speakerLabel: nil)
+        ])
+        let loop = segment(String(repeating: "Please review invoice ", count: 4))
+        let client = WindowFixtureWhisper(outputs: [[segment("Completed window")], [loop], [loop]])
+        let service = TranscriptionService(storageService: storage, memoryManager: MemoryManager(), whisperClient: client)
+        do {
+            _ = try await service.transcribeMeeting(meetingID: meeting, languageMode: .english)
+            XCTFail("Persistent loop must fail instead of saving repeated text")
+        } catch TranscriptionService.TranscriptionError.repetitionLoop { }
+        let transcript = try await storage.transcriptSegments(meetingID: meeting)
+        XCTAssertEqual(transcript.map(\.text), ["Prior transcript"])
+        let jobs = try await storage.jobs(statuses: [.failed], type: .transcription)
+        let job = try XCTUnwrap(jobs.first)
+        let state = try await storage.processingState(jobID: job.id, stage: "transcription")
+        let blob = try XCTUnwrap(state?.checkpointBlob)
+        let checkpoint = try JSONSerialization.jsonObject(with: Data(blob.utf8)) as? [String: Any]
+        XCTAssertEqual(checkpoint?["completedWindows"] as? Int, 1)
+        let calls = await client.calls
+        XCTAssertEqual(calls, 3)
+    }
+
+    func testCancellationDoesNotRetryDetectedLoop() async throws {
+        let loop = segment(String(repeating: "Please review invoice ", count: 4))
+        let client = WindowFixtureWhisper(outputs: [[loop]], cancelOnCall: 1)
+        do {
+            _ = try await Task {
+                try await TranscriptionService.decodeWindow(client: client,
+                    mediaURL: URL(fileURLWithPath: "/fixture.wav"), languageMode: .english,
+                    promptContext: "Prior", durationSeconds: 1)
+            }.value
+            XCTFail("Cancelled decode must not retry")
+        } catch is CancellationError { }
+        let calls = await client.calls
+        XCTAssertEqual(calls, 1)
+    }
+
+    private func segment(_ text: String) -> WhisperTranscribedSegment {
+        WhisperTranscribedSegment(startSeconds: 0, endSeconds: 1, text: text)
     }
 
     func testInterruptedRecordingRestoresPausedWithoutOpeningDevices() async throws {
@@ -185,15 +276,25 @@ final class MediaPipelineTests: XCTestCase {
 private actor WindowFixtureWhisper: WhisperCppClient {
     enum FixtureError: Error { case interrupted }
     private let failOnCall: Int?
+    private let outputs: [[WhisperTranscribedSegment]]?
+    private let cancelOnCall: Int?
     private(set) var calls = 0
+    private(set) var contexts: [String] = []
 
-    init(failOnCall: Int? = nil) { self.failOnCall = failOnCall }
+    init(failOnCall: Int? = nil, outputs: [[WhisperTranscribedSegment]]? = nil, cancelOnCall: Int? = nil) {
+        self.failOnCall = failOnCall
+        self.outputs = outputs
+        self.cancelOnCall = cancelOnCall
+    }
 
     nonisolated func validateConfiguration() throws { }
 
-    func transcribe(mediaURL: URL, languageMode: LanguageMode) async throws -> [WhisperTranscribedSegment] {
+    func transcribe(mediaURL: URL, languageMode: LanguageMode, promptContext: String) async throws -> [WhisperTranscribedSegment] {
         calls += 1
+        contexts.append(promptContext)
         if calls == failOnCall { throw FixtureError.interrupted }
+        if calls == cancelOnCall { withUnsafeCurrentTask { $0?.cancel() } }
+        if let outputs { return outputs[min(calls - 1, outputs.count - 1)] }
         return [WhisperTranscribedSegment(startSeconds: 0, endSeconds: 1, text: "Fixture window result")]
     }
 }

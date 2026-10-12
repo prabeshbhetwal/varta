@@ -16,6 +16,7 @@ actor TranscriptionService {
         case invalidResume
         case reviewedTranscript
         case invalidEngineOutput
+        case repetitionLoop
 
         var errorDescription: String? {
             switch self {
@@ -23,6 +24,7 @@ actor TranscriptionService {
             case .invalidResume: return "The saved transcription checkpoint no longer matches this meeting. Start a new transcription."
             case .reviewedTranscript: return "Transcription contains corrections or locked segments. Preserve those edits before retranscribing."
             case .invalidEngineOutput: return "Whisper returned invalid transcript timestamps or text. Prior transcript remains preserved."
+            case .repetitionLoop: return "Whisper output still contains a repetition loop after a clean retry. Prior transcript and completed audio windows remain preserved."
             }
         }
     }
@@ -121,15 +123,12 @@ actor TranscriptionService {
                 let window = checkpoint.preparedAudio.windows[index]
                 let url = try MediaProcessingService.checkedURL(relativePath: window.relativePath, rootDirectory: root)
                 let client = whisperClient
+                let promptContext = WhisperDecodingPolicy.boundedContext(checkpoint.segments.suffix(16).map(\.text).joined(separator: " "))
                 let transcribed = try await memoryManager.runExclusive(family: .whisper) {
-                    try await client.transcribe(mediaURL: url, languageMode: languageMode)
+                    try await Self.decodeWindow(client: client, mediaURL: url, languageMode: languageMode,
+                        promptContext: promptContext, durationSeconds: window.durationSeconds)
                 }
-                guard transcribed.allSatisfy({ segment in
-                    segment.startSeconds.isFinite && segment.endSeconds.isFinite && segment.startSeconds >= 0 &&
-                    segment.startSeconds <= window.durationSeconds && segment.endSeconds >= segment.startSeconds &&
-                    segment.endSeconds <= window.durationSeconds + 0.05 &&
-                    !segment.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                }) else { throw TranscriptionError.invalidEngineOutput }
+                try Task.checkCancellation()
                 checkpoint.segments.append(contentsOf: transcribed.map { segment in
                     NewTranscriptSegment(startSeconds: window.startSeconds + segment.startSeconds,
                         endSeconds: window.startSeconds + min(segment.endSeconds, window.durationSeconds),
@@ -165,6 +164,29 @@ actor TranscriptionService {
                 errorMessage: "Interrupted by app exit. Resume from the last completed audio window.")
         }
         return try await storageService.jobs(statuses: [.paused], type: .transcription)
+    }
+
+    nonisolated static func decodeWindow(client: WhisperCppClient, mediaURL: URL, languageMode: LanguageMode,
+        promptContext: String, durationSeconds: Double) async throws -> [WhisperTranscribedSegment] {
+        func validate(_ segments: [WhisperTranscribedSegment]) throws {
+            try Task.checkCancellation()
+            guard segments.allSatisfy({ segment in
+                segment.startSeconds.isFinite && segment.endSeconds.isFinite && segment.startSeconds >= 0 &&
+                segment.startSeconds <= durationSeconds && segment.endSeconds >= segment.startSeconds &&
+                segment.endSeconds <= durationSeconds + 0.05 &&
+                !segment.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }) else { throw TranscriptionError.invalidEngineOutput }
+        }
+        try Task.checkCancellation()
+        var result = try await client.transcribe(mediaURL: mediaURL, languageMode: languageMode, promptContext: promptContext)
+        try validate(result)
+        if WhisperDecodingPolicy.hasRepetitionLoop(result) {
+            try Task.checkCancellation()
+            result = try await client.transcribe(mediaURL: mediaURL, languageMode: languageMode, promptContext: "")
+            try validate(result)
+            guard !WhisperDecodingPolicy.hasRepetitionLoop(result) else { throw TranscriptionError.repetitionLoop }
+        }
+        return result
     }
 
     private func persist(_ checkpoint: Checkpoint, jobID: String) async throws {

@@ -11,6 +11,7 @@ final class HomeViewModel: ObservableObject {
     @Published private(set) var searchResults: [TranscriptSearchResult] = []
     @Published var selectedSearchResult: TranscriptSearchResult?
     @Published private(set) var recoverableRecordingJobs: [JobRecord] = []
+    @Published private(set) var meetingContentRevisions: [String: Int] = [:]
 
     private let storageService: StorageService
     private let importService: ImportPipelineService
@@ -42,6 +43,7 @@ final class HomeViewModel: ObservableObject {
 
         if meetings.contains(where: { $0.id == meetingID }) {
             selectedMeetingID = meetingID
+            meetingContentRevisions[meetingID, default: 0] += 1
         }
     }
 

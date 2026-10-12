@@ -81,6 +81,20 @@ previous transcript remains until atomic completion. Reviewed/locked transcripts
 cannot be replaced. Source IDs, language and transcript revision must match on
 resume. Completed recording chunks remain registered and recoverable; a crash can
 lose the latest unfinished chunk. Capture resumes only after an explicit user action.
+Source choices are checkpointed before capture starts. A recovered legacy session
+with unknown sources stays paused until at least one source is selected. Successful
+manual and duration-limit stops publish the saved meeting once to Home; the selected
+detail refreshes appended media without replacing its transcript editor state.
+
+Incremental ASR derives rolling prompt text from the current job's validated
+checkpoint. Its Unicode-normalised tail is bounded to 1,024 characters / 4,096
+UTF-8 bytes; the native decoder limits carried text context to 224 tokens and uses
+temperature zero. Four consecutive cycles of a 3–32-word phrase trigger one clean
+retry without prompt context. A persistent loop or invalid retry fails before
+advancing the window checkpoint; previous transcript and completed windows remain.
+These deterministic safeguards require bilingual/noisy-speech quality calibration.
+A separate VAD pre-filter is not integrated. Blank/non-speech suppression and the
+native decoder's default no-speech threshold do not establish that blueprint item.
 
 Summary regeneration invalidates previous translations. English remains canonical;
 translation never back-translates over it. Calendar reservation checks current source

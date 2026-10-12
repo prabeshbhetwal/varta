@@ -139,13 +139,14 @@ def select_framework(root):
     framework = candidates[0]
     if framework.name != "whisper.framework" or not framework.is_dir():
         raise PreparationError("selected slice does not contain whisper.framework")
+    physical_framework = framework.resolve(strict=True)
     for directory, names, files in os.walk(framework, followlinks=False):
         for name in names + files:
             path = Path(directory) / name
             if path.is_symlink() and os.path.isabs(os.readlink(path)):
                 raise PreparationError("framework symlinks must be relative for portable embedding")
-            if not inside(path.resolve(strict=True), root):
-                raise PreparationError("framework symlink escapes the XCFramework")
+            if not inside(path.resolve(strict=True), physical_framework):
+                raise PreparationError("framework symlink escapes the selected framework bundle")
     for relative in ("whisper", "Headers/whisper.h", "Modules/module.modulemap"):
         if not (framework / relative).is_file():
             raise PreparationError("framework is missing " + relative)
@@ -265,13 +266,14 @@ def framework_filelists(root, framework, config, kind):
         inputs.add((root / "Info.plist").resolve(strict=True))
     outputs = set()
     if framework is not None:
+        physical_framework = framework.resolve(strict=True)
         entries = {framework}
         for directory, names, files in os.walk(framework, followlinks=False):
             entries.update(Path(directory) / name for name in names + files)
         for entry in entries:
             resolved = safe_path(entry)
-            if not inside(resolved, root):
-                raise PreparationError("framework input escapes the verified artifact")
+            if not inside(resolved, physical_framework):
+                raise PreparationError("framework input escapes the selected framework bundle")
             inputs.update((entry, resolved))
         if kind == "dynamic":
             prefix = "$(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)"

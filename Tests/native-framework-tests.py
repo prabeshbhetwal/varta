@@ -175,6 +175,35 @@ class NativeFrameworkTests(unittest.TestCase):
         self.assert_failure(self.run_cli())
         self.assertFalse(self.config.exists())
 
+    def test_framework_links_inside_artifact_but_outside_bundle_are_rejected(self):
+        for name in ("Headers", "whisper"):
+            with self.subTest(name=name):
+                self.artifact = self.root / (name + ".xcframework")
+                framework = self.framework()
+                shared = self.artifact / "Shared"
+                shared.mkdir()
+                if name == "Headers":
+                    outside = shared / "Headers"
+                    outside.mkdir()
+                    protected = outside / "whisper.h"
+                    protected.write_text("void whisper_free(void *ctx);\n")
+                else:
+                    outside = shared / "whisper"
+                    protected = outside
+                    protected.write_bytes(macho())
+                original = protected.read_bytes()
+                link = framework / name
+                link.unlink()
+                relative = "../../Shared/" + name
+                link.symlink_to(relative)
+                result = self.run_cli()
+                self.assert_failure(result)
+                self.assertIn("selected framework bundle", result.stderr)
+                self.assertEqual(os.readlink(link), relative)
+                self.assertEqual(protected.read_bytes(), original)
+                self.assertFalse(self.config.exists())
+                self.assertFalse(self.embed.exists())
+
     def test_output_hardlink_cannot_change_another_file(self):
         self.framework()
         generated = self.root / "previous.xcconfig"

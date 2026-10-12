@@ -12,6 +12,7 @@ actor StorageService {
         case unsafeMediaPath
         case transcriptChanged
         case generatedContentChanged
+        case sourceMediaChanged
     }
 
     let databaseURL: URL
@@ -519,20 +520,28 @@ actor StorageService {
             """, arguments: [meetingID, output.type.rawValue, output.content, output.language.rawValue])
     }
 
-    func saveTranscriptionResult(meetingID: String, jobID: String, segments: [NewTranscriptSegment], checkpointBlob: String, expectedTranscriptRevision: Int) throws {
+    func saveTranscriptionResult(meetingID: String, jobID: String, segments: [NewTranscriptSegment], checkpointBlob: String,
+        expectedTranscriptRevision: Int, expectedSourceMediaIDs: [String], processedDurationSeconds: Double) throws {
+        guard processedDurationSeconds.isFinite, processedDurationSeconds > 0, processedDurationSeconds <= 14_400 else {
+            throw StorageError.invalidTranscriptTiming
+        }
         try dbQueue.write { db in
             guard try Self.transcriptRevision(db: db, meetingID: meetingID) == expectedTranscriptRevision else { throw StorageError.transcriptChanged }
-            guard try String.fetchOne(db, sql: "SELECT meeting_id FROM jobs WHERE id = ?", arguments: [jobID]) == meetingID else {
+            guard try String.fetchOne(db, sql: "SELECT meeting_id FROM jobs WHERE id=? AND job_type='transcription' AND status='running'", arguments: [jobID]) == meetingID else {
                 throw StorageError.meetingNotFound(meetingID: meetingID)
             }
-            try Self.replaceTranscriptSegments(db: db, meetingID: meetingID, segments: segments)
+            let currentMediaIDs = try String.fetchAll(db, sql: "SELECT id FROM audio_files WHERE meeting_id=? ORDER BY id", arguments: [meetingID])
+            guard currentMediaIDs == expectedSourceMediaIDs else { throw StorageError.sourceMediaChanged }
+            // Successful VAD silence preserves earlier content rather than clearing it.
+            if !segments.isEmpty { try Self.replaceTranscriptSegments(db: db, meetingID: meetingID, segments: segments) }
             try db.execute(sql: """
                 INSERT INTO processing_state(job_id, stage, checkpoint_blob, checkpoint_offset_seconds, updated_at)
                 VALUES (?, 'transcription', ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(job_id, stage) DO UPDATE SET checkpoint_blob=excluded.checkpoint_blob,
                     checkpoint_offset_seconds=excluded.checkpoint_offset_seconds, updated_at=CURRENT_TIMESTAMP
-                """, arguments: [jobID, checkpointBlob, segments.map(\.endSeconds).max() ?? 0])
-            try db.execute(sql: "UPDATE jobs SET status='completed', progress=1, error_message=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?", arguments: [jobID])
+                """, arguments: [jobID, checkpointBlob, processedDurationSeconds])
+            try db.execute(sql: "UPDATE jobs SET status='completed', progress=1, error_message=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                arguments: [segments.isEmpty ? "No speech detected. Original audio and prior content preserved." : nil, jobID])
         }
     }
 

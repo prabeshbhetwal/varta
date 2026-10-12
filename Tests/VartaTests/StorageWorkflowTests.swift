@@ -27,7 +27,7 @@ final class StorageWorkflowTests: XCTestCase {
         try await storage.replaceTranscriptSegments(meetingID: id, segments: [segment("Previous")])
         let job = try await storage.createJob(meetingID: id, type: .transcription, status: .running)
         let revision = try await storage.transcriptRevision(meetingID: id)
-        try await storage.saveTranscriptionResult(meetingID: id, jobID: job, segments: [segment("Completed")], checkpointBlob: "{\"completed\":true}", expectedTranscriptRevision: revision)
+        try await storage.saveTranscriptionResult(meetingID: id, jobID: job, segments: [segment("Completed")], checkpointBlob: "{\"completed\":true}", expectedTranscriptRevision: revision, expectedSourceMediaIDs: [], processedDurationSeconds: 1)
         let saved = try await storage.transcriptSegments(meetingID: id)
         let record = try await storage.job(id: job)
         let checkpoint = try await storage.processingState(jobID: job, stage: "transcription")
@@ -45,7 +45,7 @@ final class StorageWorkflowTests: XCTestCase {
         let job = try await storage.createJob(meetingID: id, type: .transcription, status: .running)
         let revision = try await storage.transcriptRevision(meetingID: id)
         do {
-            try await storage.saveTranscriptionResult(meetingID: id, jobID: job, segments: [segment("Overwrite")], checkpointBlob: "{}", expectedTranscriptRevision: revision)
+            try await storage.saveTranscriptionResult(meetingID: id, jobID: job, segments: [segment("Overwrite")], checkpointBlob: "{}", expectedTranscriptRevision: revision, expectedSourceMediaIDs: [], processedDurationSeconds: 1)
             XCTFail("Review must be preserved")
         } catch StorageService.StorageError.transcriptContainsReviewedSegments { }
         let record = try await storage.job(id: job)
@@ -91,6 +91,53 @@ final class StorageWorkflowTests: XCTestCase {
         XCTAssertNotEqual(pipeOne.id, pipeTwo.id)
     }
 
+    func testSilentTranscriptionCompletesWithoutReplacingPriorContent() async throws {
+        let storage = try StorageService(databaseURL: database())
+        let meeting = try await storage.createMeeting(title: "Quiet audio", languageMode: .english)
+        try await storage.replaceTranscriptSegments(meetingID: meeting, segments: [segment("Prior speech")])
+        let revision = try await storage.transcriptRevision(meetingID: meeting)
+        let summary = SummaryContent(concise: "Prior", detailed: "Prior", bullets: "Prior")
+        let outputs = GeneratedOutputType.allCases.map { GeneratedOutput(type: $0, language: .english, content: "Prior output") }
+        try await storage.saveMeetingOutputs(meetingID: meeting, outputs: MeetingOutputs(summary: summary, outputs: outputs), expectedTranscriptRevision: revision)
+        let before = try await storage.generatedOutputs(meetingID: meeting)
+        let job = try await storage.createJob(meetingID: meeting, type: .transcription, status: .running)
+        try await storage.saveTranscriptionResult(meetingID: meeting, jobID: job, segments: [],
+            checkpointBlob: "{\"completedWindows\":1,\"segments\":[]}", expectedTranscriptRevision: revision,
+            expectedSourceMediaIDs: [], processedDurationSeconds: 30)
+        let transcript = try await storage.transcriptSegments(meetingID: meeting)
+        let afterRevision = try await storage.transcriptRevision(meetingID: meeting)
+        let afterOutputs = try await storage.generatedOutputs(meetingID: meeting)
+        let record = try await storage.job(id: job)
+        let checkpoint = try await storage.processingState(jobID: job, stage: "transcription")
+        XCTAssertEqual(transcript.map(\.text), ["Prior speech"])
+        XCTAssertEqual(afterRevision, revision)
+        XCTAssertEqual(afterOutputs, before)
+        XCTAssertEqual(record?.status, .completed)
+        XCTAssertTrue(record?.errorMessage?.hasPrefix("No speech detected.") == true)
+        XCTAssertEqual(checkpoint?.checkpointOffsetSeconds, 30)
+    }
+
+    func testSourceChangeRejectsCompletionInsideTransaction() async throws {
+        let storage = try StorageService(databaseURL: database())
+        let meeting = try await storage.createMeeting(title: "Source change", languageMode: .english)
+        try await storage.replaceTranscriptSegments(meetingID: meeting, segments: [segment("Prior")])
+        let revision = try await storage.transcriptRevision(meetingID: meeting)
+        let job = try await storage.createJob(meetingID: meeting, type: .transcription, status: .running)
+        try await storage.registerImportedMedia(meetingID: meeting, relativePath: "Imports/\(meeting)/added.wav",
+            originalFilename: "added.wav", format: "wav", durationSeconds: 1)
+        do {
+            try await storage.saveTranscriptionResult(meetingID: meeting, jobID: job, segments: [segment("Overwrite")],
+                checkpointBlob: "{}", expectedTranscriptRevision: revision, expectedSourceMediaIDs: [], processedDurationSeconds: 1)
+            XCTFail("A changed source snapshot must not commit")
+        } catch StorageService.StorageError.sourceMediaChanged { }
+        let transcript = try await storage.transcriptSegments(meetingID: meeting)
+        let checkpoint = try await storage.processingState(jobID: job, stage: "transcription")
+        let record = try await storage.job(id: job)
+        XCTAssertEqual(transcript.map(\.text), ["Prior"])
+        XCTAssertNil(checkpoint)
+        XCTAssertEqual(record?.status, .running)
+    }
+
     func testMissingOrInvalidLocalModelsFailValidation() throws {
         let manifest = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("Models/model-manifest.json")
@@ -98,6 +145,79 @@ final class StorageWorkflowTests: XCTestCase {
         let config = LocalModelConfiguration(rootDirectory: root, manifestURL: manifest)
         XCTAssertThrowsError(try config.whisperModelURL())
         XCTAssertThrowsError(try config.languageModelDirectory())
+    }
+
+    func testLegacyManifestResolvesWhisperButRequiresVADEntry() throws {
+        let root = try assetFixtureDirectory()
+        let manifest = try assetManifest(root: root, omitVAD: true)
+        let whisper = root.appendingPathComponent("whisper-placeholder.bin")
+        try Data([1]).write(to: whisper)
+        let configuration = LocalModelConfiguration(rootDirectory: root, manifestURL: manifest, whisperOverride: whisper)
+        XCTAssertEqual(try configuration.whisperModelURL(), whisper, "This checks file resolution, never real model compatibility")
+        XCTAssertThrowsError(try configuration.vadModelURL())
+    }
+
+    func testVADRejectsMissingEmptyDirectoryAndIncorrectSizeAssets() throws {
+        let root = try assetFixtureDirectory()
+        let manifest = try assetManifest(root: root)
+        let empty = root.appendingPathComponent("empty.bin")
+        try Data().write(to: empty)
+        let directory = root.appendingPathComponent("directory.bin")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let undersized = root.appendingPathComponent("undersized.bin")
+        try Data([1]).write(to: undersized)
+        let oversized = root.appendingPathComponent("oversized.bin")
+        try Data(repeating: 0, count: LocalModelConfiguration.vadModelByteCount + 1).write(to: oversized)
+        for url in [root.appendingPathComponent("missing.bin"), empty, directory, undersized, oversized] {
+            let configuration = LocalModelConfiguration(rootDirectory: root, manifestURL: manifest, vadOverride: url)
+            XCTAssertThrowsError(try configuration.vadModelURL(), url.lastPathComponent)
+        }
+    }
+
+    func testVADRejectsCorrectSizeWithWrongContentChecksum() throws {
+        let root = try assetFixtureDirectory()
+        let manifest = try assetManifest(root: root)
+        let file = root.appendingPathComponent("wrong-content.bin")
+        try Data(repeating: 0, count: LocalModelConfiguration.vadModelByteCount).write(to: file)
+        let configuration = LocalModelConfiguration(rootDirectory: root, manifestURL: manifest, vadOverride: file)
+        XCTAssertThrowsError(try configuration.vadModelURL()) { error in
+            guard case LocalModelError.invalidAsset(let message) = error else { return XCTFail("Expected checksum validation failure") }
+            XCTAssertTrue(message.contains("checksum"))
+        }
+    }
+
+    func testVADManifestPinAndRelativePathCannotBeChanged() throws {
+        let mutations = [
+            ["engine": "other-engine"], ["backend": "metal"], ["model": "other-model"],
+            ["sha256": String(repeating: "0", count: 64)], ["path": "../outside.bin"]
+        ]
+        for mutation in mutations {
+            let root = try assetFixtureDirectory()
+            let manifest = try assetManifest(root: root, vadChanges: mutation)
+            let configuration = LocalModelConfiguration(rootDirectory: root, manifestURL: manifest)
+            XCTAssertThrowsError(try configuration.vadModelURL())
+        }
+    }
+
+    private func assetFixtureDirectory() throws -> URL {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("varta-vad-asset-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        return root
+    }
+
+    private func assetManifest(root: URL, omitVAD: Bool = false, vadChanges: [String: String] = [:]) throws -> URL {
+        let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().appendingPathComponent("Models/model-manifest.json")
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: source)) as? [String: Any])
+        if omitVAD { object.removeValue(forKey: "vad") }
+        else {
+            var vad = try XCTUnwrap(object["vad"] as? [String: Any])
+            for (key, value) in vadChanges { vad[key] = value }
+            object["vad"] = vad
+        }
+        let url = root.appendingPathComponent("model-manifest.json")
+        try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys]).write(to: url)
+        return url
     }
 
     private func database() -> URL {

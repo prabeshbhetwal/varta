@@ -23,7 +23,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Check bounded native framework fixtures
-        run: python3 Tests/native-framework-tests.py
+        run: |
+          python3 Tests/native-framework-tests.py
+          python3 Native/prepare-vad-fixtures.py --self-test
       - name: Prepare verified whisper.cpp artifact
         timeout-minutes: 5
         run: |
@@ -38,7 +40,14 @@ jobs:
             --sha256 a970006f256c8e689bc79e73f7fa7ddb8c1ed2703ad43ee48eb545b5bb6de6af \
             --extract-directory "$vendor/extracted" \
             --config-output .audit/native/whisper.generated.xcconfig
-      - name: Build and run native tests without model weights
+      - name: Prepare small verified native VAD fixtures
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          python3 Native/prepare-vad-fixtures.py \
+            --prepared-config .audit/native/whisper.generated.xcconfig \
+            --output-directory .audit/ci-vad
+      - name: Build and run native tests with VAD fixtures
         timeout-minutes: 35
         run: |
           set -euo pipefail
@@ -58,6 +67,8 @@ jobs:
           path: |
             .audit/native-tests.log
             .audit/ci-test-results.xcresult
+            .audit/ci-vad/fixture-manifest.json
+            .audit/ci-vad/*-mit.txt
           include-hidden-files: true
           if-no-files-found: warn
           retention-days: 7

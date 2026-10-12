@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 #if VARTA_REQUIRE_NATIVE_ENGINES && (!canImport(MLXLLM) || !canImport(MLXLMCommon) || !canImport(MLX))
 #error("Native CI requires all declared MLX model modules.")
 #endif
@@ -11,6 +12,7 @@ import MLXLMCommon
 enum LocalModelError: LocalizedError {
     case manifestMissing
     case invalidManifest
+    case invalidAsset(String)
     case missingAsset(String)
     case engineUnavailable(String)
     case inferenceFailed(String)
@@ -20,6 +22,7 @@ enum LocalModelError: LocalizedError {
         switch self {
         case .manifestMissing: return "The local model manifest is missing from this app build."
         case .invalidManifest: return "The model manifest must select whisper.cpp/Metal and local MLX Llama models."
+        case .invalidAsset(let message): return "Local model asset failed validation: \(message). Existing meeting data is preserved."
         case .missingAsset(let path): return "Required local model file is missing or unreadable: \(path). Choose local assets in Settings."
         case .engineUnavailable(let engine): return "\(engine) is not linked in this app build. Follow the native setup guide and rebuild; existing meeting data is preserved."
         case .inferenceFailed(let message): return "Local inference failed: \(message). Existing outputs are preserved."
@@ -33,20 +36,25 @@ struct LocalModelConfiguration: Sendable {
     let manifestURL: URL?
     let whisperOverride: URL?
     let languageModelOverride: URL?
+    let vadOverride: URL?
+    static let vadModelByteCount = 885_098
+    static let vadModelSHA256 = "2aa269b785eeb53a82983a20501ddf7c1d9c48e33ab63a41391ac6c9f7fb6987"
 
-    init(rootDirectory: URL? = nil, manifestURL: URL? = nil, whisperOverride: URL? = nil, languageModelOverride: URL? = nil) {
+    init(rootDirectory: URL? = nil, manifestURL: URL? = nil, whisperOverride: URL? = nil, languageModelOverride: URL? = nil, vadOverride: URL? = nil) {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
         self.rootDirectory = rootDirectory ?? support.appendingPathComponent("Varta")
         self.manifestURL = manifestURL ?? Bundle.main.url(forResource: "model-manifest", withExtension: "json")
         self.whisperOverride = whisperOverride
         self.languageModelOverride = languageModelOverride
+        self.vadOverride = vadOverride
     }
 
     private struct Manifest: Decodable {
-        struct Engine: Decodable { let engine: String; let model: String; let path: String; let backend: String? }
+        struct Engine: Decodable { let engine: String; let model: String; let path: String; let backend: String?; let sha256: String? }
         let whisper: Engine
         let summariser: Engine
+        let vad: Engine?
     }
 
     private func manifest() throws -> Manifest {
@@ -88,6 +96,36 @@ struct LocalModelConfiguration: Sendable {
         guard !weights.isEmpty else { throw LocalModelError.missingAsset(directory.appendingPathComponent("*.safetensors").path) }
         for weight in weights { try Self.requireFile(weight) }
         return directory
+    }
+
+    func vadModelURL() throws -> URL {
+        let manifest = try manifest()
+        guard let vad = manifest.vad, vad.engine == "whisper.cpp-vad", vad.backend == "cpu",
+              vad.model == "silero-v6.2.0", vad.sha256 == Self.vadModelSHA256 else {
+            throw LocalModelError.invalidAsset("VAD manifest must select the pinned Silero v6.2.0 CPU model and checksum.")
+        }
+        let url = try vadOverride ?? resolve(vad.path)
+        guard url.isFileURL else { throw LocalModelError.invalidAsset("VAD model must be a local file.") }
+        try Self.requireFile(url)
+        let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+        guard size == Self.vadModelByteCount else {
+            throw LocalModelError.invalidAsset("VAD model must contain exactly \(Self.vadModelByteCount) bytes: \(url.path)")
+        }
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        var count = 0
+        while let chunk = try handle.read(upToCount: 64 * 1_024), !chunk.isEmpty {
+            try Task.checkCancellation()
+            count += chunk.count
+            guard count <= Self.vadModelByteCount else { throw LocalModelError.invalidAsset("VAD model changed while validating.") }
+            hasher.update(data: chunk)
+        }
+        let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        guard count == Self.vadModelByteCount, digest == Self.vadModelSHA256 else {
+            throw LocalModelError.invalidAsset("VAD model checksum differs from the pinned official asset: \(url.path)")
+        }
+        return url
     }
 
     private static func requireFile(_ url: URL) throws {

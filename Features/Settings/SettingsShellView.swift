@@ -174,6 +174,7 @@ private struct LocalModelSettingsView: View {
     @EnvironmentObject private var appModel: AppModel
     @AppStorage("varta.whisperModelPath") private var whisperPath = ""
     @AppStorage("varta.languageModelPath") private var languageModelPath = ""
+    @AppStorage("varta.vadModelPath") private var vadPath = ""
     @State private var status: String?
 
     var body: some View {
@@ -182,14 +183,20 @@ private struct LocalModelSettingsView: View {
                 Text("Select a local whisper.cpp large-v3 Q5 model file.").foregroundStyle(.secondary)
                 Text(whisperPath.isEmpty ? "Using model manifest location" : whisperPath)
                     .font(.caption.monospaced()).textSelection(.enabled)
-                Button("Choose Whisper Model…") { chooseModel(isDirectory: false) }
+                Button("Choose Whisper Model…") { chooseModel(.whisper) }
+            }
+            Section("Speech detection") {
+                Text("Select the local Silero v6.2.0 VAD model used to locate speech before transcription.").foregroundStyle(.secondary)
+                Text(vadPath.isEmpty ? "Using model manifest location" : vadPath)
+                    .font(.caption.monospaced()).textSelection(.enabled)
+                Button("Choose VAD Model…") { chooseModel(.vad) }
             }
             Section("MLX summary and translation") {
                 Text("Select a local Llama 3.1 8B Instruct 4-bit folder containing configuration, tokenizer and safetensors files.")
                     .foregroundStyle(.secondary)
                 Text(languageModelPath.isEmpty ? "Using model manifest location" : languageModelPath)
                     .font(.caption.monospaced()).textSelection(.enabled)
-                Button("Choose MLX Model Folder…") { chooseModel(isDirectory: true) }
+                Button("Choose MLX Model Folder…") { chooseModel(.languageModel) }
             }
             Section("Validation") {
                 Button("Validate Local Assets") { Task { await validateModels() } }
@@ -200,14 +207,25 @@ private struct LocalModelSettingsView: View {
         }.formStyle(.grouped).padding(24)
     }
 
-    private func chooseModel(isDirectory: Bool) {
+    private enum ModelAsset { case whisper, vad, languageModel }
+
+    private func chooseModel(_ asset: ModelAsset) {
         let panel = NSOpenPanel()
+        let isDirectory: Bool
+        switch asset {
+        case .whisper: panel.title = "Choose Local Whisper Model"; isDirectory = false
+        case .vad: panel.title = "Choose Local Silero VAD Model"; isDirectory = false
+        case .languageModel: panel.title = "Choose Local MLX Model Folder"; isDirectory = true
+        }
         panel.canChooseDirectories = isDirectory
         panel.canChooseFiles = !isDirectory
         panel.allowsMultipleSelection = false
-        panel.title = isDirectory ? "Choose Local MLX Model Folder" : "Choose Local Whisper Model"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        if isDirectory { languageModelPath = url.path } else { whisperPath = url.path }
+        switch asset {
+        case .whisper: whisperPath = url.path
+        case .vad: vadPath = url.path
+        case .languageModel: languageModelPath = url.path
+        }
         status = nil
     }
 
@@ -216,12 +234,14 @@ private struct LocalModelSettingsView: View {
         let configuration = LocalModelConfiguration(
             rootDirectory: await storage.appSupportDirectory(),
             whisperOverride: whisperPath.isEmpty ? nil : URL(fileURLWithPath: whisperPath),
-            languageModelOverride: languageModelPath.isEmpty ? nil : URL(fileURLWithPath: languageModelPath, isDirectory: true)
+            languageModelOverride: languageModelPath.isEmpty ? nil : URL(fileURLWithPath: languageModelPath, isDirectory: true),
+            vadOverride: vadPath.isEmpty ? nil : URL(fileURLWithPath: vadPath)
         )
         do {
             _ = try configuration.whisperModelURL()
+            _ = try configuration.vadModelURL()
             _ = try configuration.languageModelDirectory()
-            status = "Required local asset files found. Inference has not been tested."
+            status = "Required local assets found; VAD checksum verified. Inference has not been tested."
         } catch { status = error.localizedDescription }
     }
 }

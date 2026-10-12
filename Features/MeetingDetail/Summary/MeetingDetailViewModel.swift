@@ -112,7 +112,8 @@ final class MeetingDetailViewModel: ObservableObject {
             let transcriptionService = TranscriptionService(
                 storageService: storageService,
                 memoryManager: memoryManager,
-                whisperClient: WhisperCppBridge(configuration: WhisperCppConfiguration(models: configuration))
+                whisperClient: WhisperCppBridge(configuration: WhisperCppConfiguration(models: configuration)),
+                voiceActivityDetector: WhisperVoiceActivityDetector(configuration: configuration)
             )
             _ = try await transcriptionService.transcribeMeeting(
                 meetingID: meetingID,
@@ -120,7 +121,9 @@ final class MeetingDetailViewModel: ObservableObject {
                 resumeJobID: resumeJobID
             )
             await refresh()
-            successMessage = "Transcript generated."
+            successMessage = await transcriptionService.lastCompletionHadNoSpeech
+                ? "No speech detected. Audio and previous meeting content remain saved."
+                : "Transcript generated."
         } catch is CancellationError {
             await refresh()
             successMessage = "Transcription paused. Completed windows remain saved."
@@ -247,7 +250,8 @@ final class MeetingDetailViewModel: ObservableObject {
         let defaults = UserDefaults.standard
         let whisper = defaults.string(forKey: "varta.whisperModelPath").flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
         let languageModel = defaults.string(forKey: "varta.languageModelPath").flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true) }
-        return LocalModelConfiguration(rootDirectory: await storageService.appSupportDirectory(), whisperOverride: whisper, languageModelOverride: languageModel)
+        let vad = defaults.string(forKey: "varta.vadModelPath").flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
+        return LocalModelConfiguration(rootDirectory: await storageService.appSupportDirectory(), whisperOverride: whisper, languageModelOverride: languageModel, vadOverride: vad)
     }
 
     func transcriptEmptyMessage() -> String {

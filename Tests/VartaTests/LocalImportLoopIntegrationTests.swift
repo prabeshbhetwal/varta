@@ -8,7 +8,8 @@ final class LocalImportLoopIntegrationTests: XCTestCase {
         let storage = try StorageService(databaseURL: temporaryDatabaseURL())
         let memoryManager = MemoryManager()
         let transcription = TranscriptionService(
-            storageService: storage, memoryManager: memoryManager, whisperClient: FixtureWhisperClient()
+            storageService: storage, memoryManager: memoryManager, whisperClient: FixtureWhisperClient(),
+            voiceActivityDetector: FixtureVoiceActivityDetector()
         )
         let importer = ImportPipelineService(storageService: storage)
 
@@ -42,7 +43,8 @@ final class LocalImportLoopIntegrationTests: XCTestCase {
         ])
         let missing = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
         let transcription = TranscriptionService(storageService: storage, memoryManager: MemoryManager(),
-            whisperClient: WhisperCppBridge(configuration: WhisperCppConfiguration(models: LocalModelConfiguration(whisperOverride: missing))))
+            whisperClient: WhisperCppBridge(configuration: WhisperCppConfiguration(models: LocalModelConfiguration(whisperOverride: missing))),
+            voiceActivityDetector: FixtureVoiceActivityDetector())
         do {
             _ = try await transcription.transcribeMeeting(meetingID: meetingID, mediaURL: makeSampleMediaFile(), languageMode: .english)
             XCTFail("Missing local assets must fail rather than invent a transcript")
@@ -220,7 +222,8 @@ final class LocalImportLoopIntegrationTests: XCTestCase {
 
 // Synthetic transcript fixture: verifies persistence, never model accuracy.
 private struct FixtureWhisperClient: WhisperCppClient {
-    func transcribe(mediaURL: URL, languageMode: LanguageMode, promptContext: String) async throws -> [WhisperTranscribedSegment] {
+    func configurationIdentity() throws -> String { "fixture-whisper-v1" }
+    func transcribe(mediaURL: URL, languageMode: LanguageMode, promptContext: String, speechSpans: [VoiceActivitySpan]) async throws -> [WhisperTranscribedSegment] {
         [WhisperTranscribedSegment(startSeconds: 0, endSeconds: 1, text: "We agreed to review the release next week.")]
     }
 }

@@ -8,7 +8,7 @@ pre-existing local changes. No post-MVP adapter is included.
 | Required slice | Owning components and callers | Acceptance evidence |
 |---|---|---|
 | Native models | Model manifest/config validation; `WhisperCppBridge`; local MLX client; `MemoryManager`; Xcode dependency/framework wiring | Missing/corrupt assets fail explicitly; native bindings use declared engines; no fabricated fallback; exclusive loading and release; native inference checks queued |
-| Complete import/transcription | Disk-streamed AVFoundation conversion to 16 kHz mono WAV windows; `ImportPipelineService`; `TranscriptionService`; storage/jobs/checkpoints; meeting detail generation | Synthetic media conversion tests; all windows included with absolute timestamps; checkpoint resume; reviewed segments preserved on failure |
+| Complete import/transcription | Disk-streamed AVFoundation conversion to 16 kHz mono WAV windows; genuine Silero VAD; original-buffer speech crops; `TranscriptionService`; storage/jobs/checkpoints; meeting detail generation | Silence/speech/mixed VAD fixtures; absolute offsets; model/policy and original-window resume identity; prior content preserved on silence/failure |
 | Generated meeting content | Prompt templates, `SummariserService`, `TranslationService`, transactional output storage, summary/output/translation tabs | Injected generator verifies 10-minute/30-minute/final orchestration and source context; malformed model output cannot overwrite existing content; real bilingual quality check queued |
 | Review and filing | Transcript playback/seek, language mode/glossary/prompt settings, FTS query/results, EventKit candidate review and explicit creation, permissions UI | Focused parsing/search/storage tests; event creation occurs only after user confirmation; live permissions/UI checks queued |
 | Recording/recovery | Source/segment timing metadata, combined processing timeline, durable capture chunks, recorder persistence error handling, interrupted-job recovery | Fixture timelines/checkpoints and failure-path tests; physical mixing, sleep/wake and four-hour checks queued |
@@ -56,9 +56,19 @@ job checkpoints, detects conservative repetition loops and retries once without
 context. Deterministic regressions cover these paths; real speech quality and
 rendered editor interaction remain separate acceptance checks.
 
+Silero VAD now precedes ASR through the pinned native framework. Quiet windows skip
+Whisper; successful all-quiet jobs retain prior transcript/outputs/audio and complete
+with an explicit diagnostic. Speech spans retain original sample positions. VAD
+model/policy and Whisper metadata identities are frozen in checkpoints; legacy or
+changed identities reject Resume. Prepared windows remain meeting-owned and frame
+contiguous, with their actual WAV length/format checked. Completion rechecks source
+IDs and transcript revision inside one transaction.
+
 Framework preparation includes 29 Python fixtures. Native XCTest covers synthetic
 audio conversion, injected model orchestration, storage/recovery and Calendar
 failure paths. CI requires real Whisper/MLX module compilation, explicit Whisper
-linking and dynamic framework embedding. Consult PR #1's exact-head check for
+linking and dynamic framework embedding. A separate runner-only fixture helper has
+five offline checks and verifies the small VAD model, speech fixture, model header
+and 13 native exports before real VAD tests. Consult PR #1's exact-head check for
 executed results. Actual model quality, physical permissions/capture, four-hour
 measurements and signed distribution remain explicit external gates.

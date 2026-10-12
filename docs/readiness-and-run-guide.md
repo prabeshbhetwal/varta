@@ -11,6 +11,8 @@ checks must establish readiness; implementation alone is not passing evidence.
   Missing engines, weights or invalid model responses fail explicitly.
 - Media conversion streams 16 kHz mono WAV windows. Processing and playback combine
   all recording chunks and sources on their stored timeline.
+- Genuine Silero VAD identifies speech before ASR; quiet windows preserve the
+  original timeline. All-quiet completion retains prior content and reports no speech.
 - Summary/translation, playback/seek, FTS search and reviewed Calendar controls are
   wired. Generated content commits atomically; transcript edits invalidate stale output.
 - Finalised recording chunks and transcription windows have durable checkpoints.
@@ -62,7 +64,8 @@ database is `demo-data/varta.sqlite` and companion media/prompts are under
 2. Use **Import** (Command-I) with synthetic audio, or choose **Audio Sources** and
    record a consenting test session. Stop finalises the captured audio.
 3. Select a meeting. Choose language, transcribe, review corrections/locks, generate
-   content, then translate if needed. Playback supports seeking to transcript rows.
+   content, then translate if needed. Settings requires local Whisper, Silero VAD
+   and MLX assets. Playback supports seeking to transcript rows.
    Calendar suggestions require reviewed title, date, duration and explicit creation.
 
 Settings are available through the standard app Settings menu. System audio

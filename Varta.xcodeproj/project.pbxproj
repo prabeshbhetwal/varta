@@ -81,6 +81,8 @@
 		BF14E0000000000000000000 /* CalendarDraftTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3660000000000000000000 /* CalendarDraftTests.swift */; };
 		BF14F0000000000000000000 /* RecordingSourceRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3670000000000000000000 /* RecordingSourceRecoveryTests.swift */; };
 		BF1500000000000000000000 /* SummaryRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3680000000000000000000 /* SummaryRecoveryTests.swift */; };
+		BF1510000000000000000000 /* VoiceActivityService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR2940000000000000000000 /* VoiceActivityService.swift */; };
+		BF1520000000000000000000 /* VoiceActivityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3690000000000000000000 /* VoiceActivityTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -166,6 +168,8 @@
 		FR3660000000000000000000 /* CalendarDraftTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarDraftTests.swift; sourceTree = "<group>"; };
 		FR3670000000000000000000 /* RecordingSourceRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingSourceRecoveryTests.swift; sourceTree = "<group>"; };
 		FR3680000000000000000000 /* SummaryRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SummaryRecoveryTests.swift; sourceTree = "<group>"; };
+		FR2940000000000000000000 /* VoiceActivityService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceActivityService.swift; sourceTree = "<group>"; };
+		FR3690000000000000000000 /* VoiceActivityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceActivityTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -294,6 +298,7 @@
 				FR3660000000000000000000 /* CalendarDraftTests.swift */,
 				FR3670000000000000000000 /* RecordingSourceRecoveryTests.swift */,
 				FR3680000000000000000000 /* SummaryRecoveryTests.swift */,
+				FR3690000000000000000000 /* VoiceActivityTests.swift */,
 			);
 			path = Tests/VartaTests;
 			sourceTree = "<group>";
@@ -403,6 +408,7 @@
 				FR2910000000000000000000 /* TranscriptionService.swift */,
 				FR2920000000000000000000 /* ImportPipelineService.swift */,
 				FR2930000000000000000000 /* MediaProcessingService.swift */,
+				FR2940000000000000000000 /* VoiceActivityService.swift */,
 			);
 			path = Transcription;
 			sourceTree = "<group>";
@@ -667,6 +673,7 @@
 				BF1170000000000000000000 /* TranslationTabView.swift in Sources */,
 				BF1180000000000000000000 /* OutputsTabView.swift in Sources */,
 				BF1190000000000000000000 /* WhisperCppBridge.swift in Sources */,
+				BF1510000000000000000000 /* VoiceActivityService.swift in Sources */,
 				BF11A0000000000000000000 /* TranscriptionService.swift in Sources */,
 				BF11B0000000000000000000 /* ImportPipelineService.swift in Sources */,
 				BF11C0000000000000000000 /* PromptTemplateService.swift in Sources */,
@@ -708,6 +715,7 @@
 				BF14E0000000000000000000 /* CalendarDraftTests.swift in Sources */,
 				BF14F0000000000000000000 /* RecordingSourceRecoveryTests.swift in Sources */,
 				BF1500000000000000000000 /* SummaryRecoveryTests.swift in Sources */,
+				BF1520000000000000000000 /* VoiceActivityTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

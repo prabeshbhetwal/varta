@@ -1,7 +1,8 @@
 # Native setup and verification
 
 Varta targets Apple Silicon/macOS 14+. The source uses whisper.cpp/Metal for speech
-and local MLX Llama 3.1 8B Instruct 4-bit for generation/translation. Model weights
+and local MLX Llama 3.1 8B Instruct 4-bit for generation/translation. Silero VAD
+through the same pinned Whisper framework filters speech before transcription. Model weights
 are external assets; no app runtime cloud adapter or synthetic fallback is used.
 
 ## Engine preparation
@@ -39,11 +40,16 @@ define the adapters.
 
 ## Local assets
 
-Choose an existing Whisper ggml-large-v3-q5_0.bin and a local MLX
+Choose an existing Whisper ggml-large-v3-q5_0.bin, the pinned Silero v6.2.0 VAD file and a local MLX
 Meta-Llama-3.1-8B-Instruct-4bit directory in Settings. The Llama directory needs
 config.json, tokenizer.json, tokenizer_config.json and non-empty safetensors.
 Obtain weights under their applicable licences/access terms; Varta does not
 download them automatically. Local directory loading keeps tokenizer/weights offline.
+VAD requires exactly 885,098 bytes with SHA-256
+2aa269b785eeb53a82983a20501ddf7c1d9c48e33ab63a41391ac6c9f7fb6987;
+Settings validates that checksum. Default VAD location is
+Models/vad/ggml-silero-v6.2.0.bin. [VAD stage and asset provenance](voice-activity-stage-and-assets.md)
+describes the MIT model and immutable publisher revision.
 
 Default paths follow Models/model-manifest.json relative to app companion storage.
 An isolated VARTA_DATA_DIRECTORY uses its sibling varta.files root, including Models
@@ -59,6 +65,7 @@ Malformed/empty responses and token-limit truncation cannot replace valid conten
 ## Checks
 
 1. Run python3 Tests/native-framework-tests.py for parser, archive and embedding fixtures.
+   Run python3 Native/prepare-vad-fixtures.py --self-test for bounded fixture preparation checks.
 2. Run native tests using the commands in readiness-and-run-guide.md when host capacity
    permits, with the framework prepared before xcodebuild.
 3. Verify import → transcription → reviewed summary → Nepali translation using licensed
@@ -70,7 +77,10 @@ Malformed/empty responses and token-limit truncation cannot replace valid conten
 The public-repository native-checks workflow uses standard macos-26 capacity,
 bounded timeouts, jobs=2 and serial test execution. Its synthetic fixtures exercise
 orchestration, storage, media conversion and Calendar failure paths, not model
-accuracy or real permission flows. No model weights are downloaded in CI.
+accuracy or real permission flows. CI downloads only the small pinned MIT Silero
+model and official pinned speech fixture, verifies checksums/model headers/native
+exports, and executes real VAD silence/speech/mixed cases. It downloads no Whisper
+ASR or MLX Llama weights. VAD fixture preparation refuses downloads outside CI.
 CI also enables mandatory module compile guards: missing Whisper/MLX imports fail
 the build instead of exercising an unavailable-engine fallback.
 
@@ -79,7 +89,9 @@ the build instead of exercising an unavailable-engine fallback.
 Transcription checkpoints store completed windows and accumulated segments; the
 previous transcript remains until atomic completion. Reviewed/locked transcripts
 cannot be replaced. Source IDs, language and transcript revision must match on
-resume. Completed recording chunks remain registered and recoverable; a crash can
+resume. VAD model/policy and Whisper metadata identity must also match; older
+checkpoints without those identities require a fresh job. Prepared WAVs must belong
+to the meeting and retain their contiguous original frame timeline. Completed recording chunks remain registered and recoverable; a crash can
 lose the latest unfinished chunk. Capture resumes only after an explicit user action.
 Source choices are checkpointed before capture starts. A recovered legacy session
 with unknown sources stays paused until at least one source is selected. Successful
@@ -93,8 +105,13 @@ temperature zero. Four consecutive cycles of a 3–32-word phrase trigger one cl
 retry without prompt context. A persistent loop or invalid retry fails before
 advancing the window checkpoint; previous transcript and completed windows remain.
 These deterministic safeguards require bilingual/noisy-speech quality calibration.
-A separate VAD pre-filter is not integrated. Blank/non-speech suppression and the
-native decoder's default no-speech threshold do not establish that blueprint item.
+Genuine Silero detection precedes ASR. Quiet windows advance without Whisper
+decoding; an all-quiet job completes while preserving prior transcript/outputs and
+original audio. Speech spans decode directly from original-buffer ranges and retain
+original offsets. Native probability coverage must be complete before silence is
+accepted. Cancellation is checked between native VAD calls; the pinned VAD API has
+no mid-call abort callback. Speech/noise/code-switching calibration remains separate
+from fixture execution.
 
 Summary regeneration invalidates previous translations. English remains canonical;
 translation never back-translates over it. Calendar reservation checks current source

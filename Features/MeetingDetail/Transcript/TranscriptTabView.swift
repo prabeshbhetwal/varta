@@ -60,6 +60,7 @@ private struct TranscriptSegmentRow: View {
             }
 
             TextEditor(text: $draftText)
+                .accessibilityLabel("Transcript at \(timecode(segment.startSeconds))")
                 .frame(minHeight: 80)
                 .disabled(segment.isLocked)
                 .font(.body)

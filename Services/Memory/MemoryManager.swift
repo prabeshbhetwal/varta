@@ -15,19 +15,17 @@ actor MemoryManager {
 
     private var activeFamily: ModelFamily?
     private var runtimeMode: RuntimeMode = .normal
+    private var thermalState: ProcessInfo.ThermalState = .nominal
+    private var onBattery = false
 
     func runExclusive<T: Sendable>(
         family: ModelFamily,
         operation: @Sendable () async throws -> T
     ) async throws -> T {
-        while runtimeMode == .paused {
-            try await Task.sleep(nanoseconds: 50_000_000)
-        }
-
-        while let activeFamily, activeFamily != family {
+        while runtimeMode == .paused || activeFamily != nil {
             try await Task.sleep(nanoseconds: 25_000_000)
         }
-
+        try Task.checkCancellation()
         activeFamily = family
         defer { activeFamily = nil }
 
@@ -39,9 +37,19 @@ actor MemoryManager {
     }
 
     func handleThermalStateChange(_ thermalState: ProcessInfo.ThermalState) {
+        self.thermalState = thermalState
+        updateRuntimeMode()
+    }
+
+    func handlePowerStateChange(onBattery: Bool) {
+        self.onBattery = onBattery
+        updateRuntimeMode()
+    }
+
+    private func updateRuntimeMode() {
         switch thermalState {
         case .nominal, .fair:
-            runtimeMode = .normal
+            runtimeMode = onBattery ? .reduced : .normal
         case .serious:
             runtimeMode = .reduced
         case .critical:
@@ -51,11 +59,4 @@ actor MemoryManager {
         }
     }
 
-    func handlePowerStateChange(onBattery: Bool) {
-        guard runtimeMode != .paused else {
-            return
-        }
-
-        runtimeMode = onBattery ? .reduced : .normal
-    }
 }

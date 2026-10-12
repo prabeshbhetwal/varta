@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 private func formatted(seconds: Double) -> String {
     let total = max(Int(seconds), 0)
@@ -18,7 +19,8 @@ struct HomeView: View {
 
     var body: some View {
         Group {
-            if let storage = appModel.storageService, let recorderCoordinator = appModel.recorderCoordinator {
+            if let storage = appModel.storageService, let recorderCoordinator = appModel.recorderCoordinator,
+               let memoryManager = appModel.memoryManager {
                 let viewModel = viewModelHolder.viewModel(storageService: storage)
                 let recordingVM = recordingVMHolder.viewModel(
                     recorderCoordinator: recorderCoordinator,
@@ -28,7 +30,7 @@ struct HomeView: View {
                         }
                     }
                 )
-                HomeContentView(storageService: storage, viewModel: viewModel, recordingVM: recordingVM)
+                HomeContentView(storageService: storage, memoryManager: memoryManager, viewModel: viewModel, recordingVM: recordingVM)
             } else {
                 ProgressView("Preparing storage")
             }
@@ -38,8 +40,10 @@ struct HomeView: View {
 
 private struct HomeContentView: View {
     let storageService: StorageService
+    let memoryManager: MemoryManager
     @ObservedObject var viewModel: HomeViewModel
     @ObservedObject var recordingVM: RecordingControlsViewModel
+    @State private var showsImporter = false
 
     var body: some View {
         NavigationSplitView {
@@ -61,16 +65,16 @@ private struct HomeContentView: View {
                         Text("Start a recording to create your first transcript source.")
                     } actions: {
                         Button("Record") {
-                            recordingVM.startMicrophoneRecording()
+                            recordingVM.startRecording()
                         }
-                        .keyboardShortcut("r", modifiers: [])
+                        .keyboardShortcut("r", modifiers: .command)
                     }
                 }
             }
             .navigationTitle("Recordings")
         } detail: {
             if let meetingID = viewModel.selectedMeetingID {
-                MeetingDetailView(meetingID: meetingID, storageService: storageService)
+                MeetingDetailView(meetingID: meetingID, storageService: storageService, memoryManager: memoryManager)
                     .id(meetingID)
             } else {
                 ContentUnavailableView("Select a Recording", systemImage: "list.bullet.rectangle")
@@ -79,6 +83,31 @@ private struct HomeContentView: View {
         .navigationSplitViewColumnWidth(min: 260, ideal: 320)
         .toolbar {
             RecordingToolbarControls(viewModel: recordingVM)
+            ToolbarItem {
+                Button {
+                    showsImporter = true
+                } label: {
+                    Label("Import", systemImage: "square.and.arrow.down")
+                }
+                .disabled(viewModel.isImporting)
+                .keyboardShortcut("i", modifiers: .command)
+            }
+        }
+        .fileImporter(isPresented: $showsImporter, allowedContentTypes: [.audio, .movie]) { result in
+            switch result {
+            case .success(let url):
+                Task { await viewModel.importMediaFile(at: url) }
+            case .failure(let error):
+                viewModel.errorMessage = error.localizedDescription
+            }
+        }
+        .alert("Varta", isPresented: Binding(
+            get: { viewModel.errorMessage != nil || recordingVM.errorMessage != nil },
+            set: { _ in viewModel.errorMessage = nil; recordingVM.errorMessage = nil }
+        )) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(viewModel.errorMessage ?? recordingVM.errorMessage ?? "Unknown error")
         }
         .safeAreaInset(edge: .bottom) {
             RecordingStatusFooter(viewModel: recordingVM)
@@ -121,23 +150,24 @@ private struct RecordingToolbarControls: ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
             switch viewModel.snapshot.state {
             case .idle, .failed, .completed:
+                Menu {
+                    Toggle("Microphone", isOn: $viewModel.captureMicrophone)
+                    Toggle("System Audio", isOn: $viewModel.captureSystemAudio)
+                } label: {
+                    Label("Audio Sources", systemImage: "slider.horizontal.3")
+                }
                 Button {
-                    viewModel.startMicrophoneRecording()
+                    viewModel.startRecording()
                 } label: {
                     Label("Record", systemImage: "record.circle")
                 }
                 .help("Start recording")
+                .disabled(!viewModel.captureMicrophone && !viewModel.captureSystemAudio)
             case .starting:
                 ProgressView()
                     .controlSize(.small)
                     .help("Starting recording")
 
-                Button {
-                    viewModel.stopRecording()
-                } label: {
-                    Label("Stop", systemImage: "stop.fill")
-                }
-                .help("Stop recording")
             case .recording:
                 Text(formatted(seconds: viewModel.snapshot.totalRecordedSeconds))
                     .monospacedDigit()
@@ -219,7 +249,7 @@ private struct RecordingStatusFooter: View {
                     Button("Stop", role: .destructive) {
                         viewModel.stopRecording()
                     }
-                    .disabled(viewModel.snapshot.state == .stopping)
+                    .disabled(viewModel.snapshot.state == .stopping || viewModel.snapshot.state == .starting)
                 }
                 .foregroundStyle(.primary)
             } else if let userMessage = viewModel.userMessage, !userMessage.isEmpty {

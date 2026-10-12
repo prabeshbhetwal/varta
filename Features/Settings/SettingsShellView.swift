@@ -125,6 +125,7 @@ private struct PermissionSettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             SettingsPermissionStatusRow(title: "Microphone", state: appModel.permissions.microphoneState.rawValue)
+            SettingsPermissionStatusRow(title: "Screen Recording", state: appModel.permissions.screenRecordingState.rawValue)
 
             HStack(spacing: 12) {
                 Button("Request Microphone") {
@@ -132,12 +133,16 @@ private struct PermissionSettingsView: View {
                         await appModel.permissions.requestMicrophonePermission()
                     }
                 }
+                Button("Request Screen Recording") {
+                    appModel.permissions.requestScreenRecordingPermission()
+                }
             }
         }
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .task {
             appModel.permissions.refreshMicrophone()
+            appModel.permissions.refreshScreenRecording()
         }
     }
 }
@@ -169,8 +174,7 @@ private struct OnboardingSettingsView: View {
 
             Button("Reset Onboarding") {
                 Task {
-                    try? await appModel.settingsStore?.set(false, for: .onboardingCompleted)
-                    await appModel.bootstrap()
+                    await appModel.resetOnboarding()
                 }
             }
         }

@@ -20,6 +20,8 @@ final class AppModel: ObservableObject {
     private(set) var systemRuntimeCoordinator: SystemRuntimeCoordinator?
 
     init() {
+        // Test hosts must not bootstrap or migrate the user's real database.
+        guard ProcessInfo.processInfo.environment["VARTA_TESTING"] != "1" else { return }
         Task {
             await bootstrap()
         }
@@ -29,7 +31,10 @@ final class AppModel: ObservableObject {
         systemRuntimeCoordinator?.stop()
 
         do {
-            let storageService = try StorageService()
+            let databaseURL = ProcessInfo.processInfo.environment["VARTA_DATA_DIRECTORY"].map {
+                URL(fileURLWithPath: $0, isDirectory: true).appendingPathComponent("varta.sqlite")
+            }
+            let storageService = try StorageService(databaseURL: databaseURL)
             let settingsStore = SettingsStore(storageService: storageService)
             let memoryManager = MemoryManager()
             let jobQueue = JobQueue(storageService: storageService)
@@ -72,6 +77,15 @@ final class AppModel: ObservableObject {
             hasCompletedOnboarding = true
         } catch {
             launchState = .failed("Failed to persist onboarding completion: \(error.localizedDescription)")
+        }
+    }
+
+    func resetOnboarding() async {
+        do {
+            try await settingsStore?.set(false, for: .onboardingCompleted)
+            hasCompletedOnboarding = false
+        } catch {
+            launchState = .failed("Failed to reset onboarding: \(error.localizedDescription)")
         }
     }
 }

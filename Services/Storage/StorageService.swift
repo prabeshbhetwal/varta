@@ -4,9 +4,12 @@ import GRDB
 actor StorageService {
     enum StorageError: Error {
         case transcriptSegmentLocked(segmentID: Int64)
+        case transcriptContainsReviewedSegments(meetingID: String)
+        case invalidTranscriptTiming
         case meetingNotFound(meetingID: String)
         case fileDeletionFailed(path: String, reason: String)
         case folderDeletionFailed(path: String, reason: String)
+        case unsafeMediaPath
     }
 
     let databaseURL: URL
@@ -15,7 +18,10 @@ actor StorageService {
     private let appSupportDirectoryURL: URL
 
     init(databaseURL: URL? = nil, fileManager: FileManager = .default) throws {
-        let resolvedAppSupportDirectory = try Self.applicationSupportDirectory(fileManager: fileManager)
+        // Explicit databases keep all companion files isolated from personal app data.
+        let resolvedAppSupportDirectory = try databaseURL.map {
+            $0.deletingPathExtension().appendingPathExtension("files")
+        } ?? Self.applicationSupportDirectory(fileManager: fileManager)
         let resolvedDatabaseURL = databaseURL ?? resolvedAppSupportDirectory.appendingPathComponent("varta.sqlite")
 
         try fileManager.createDirectory(
@@ -208,7 +214,21 @@ actor StorageService {
     }
 
     func replaceTranscriptSegments(meetingID: String, segments: [NewTranscriptSegment]) throws {
+        guard segments.allSatisfy({
+            $0.startSeconds.isFinite && $0.endSeconds.isFinite &&
+                $0.startSeconds >= 0 && $0.endSeconds >= $0.startSeconds
+        }) else {
+            throw StorageError.invalidTranscriptTiming
+        }
         try dbQueue.write { db in
+            let reviewedCount = try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM transcript_segments WHERE meeting_id = ? AND (is_locked = 1 OR corrected_text IS NOT NULL)",
+                arguments: [meetingID]
+            ) ?? 0
+            guard reviewedCount == 0 else {
+                throw StorageError.transcriptContainsReviewedSegments(meetingID: meetingID)
+            }
             try db.execute(
                 sql: "DELETE FROM transcript_segments WHERE meeting_id = ?",
                 arguments: [meetingID]
@@ -745,13 +765,9 @@ actor StorageService {
         let importsDirectory = appSupportDirectoryURL.appendingPathComponent("Imports", isDirectory: true)
         let meetingDirectory = importsDirectory.appendingPathComponent(meetingID, isDirectory: true)
         let sanitizedFilename = sourceURL.lastPathComponent.replacingOccurrences(of: "/", with: "-")
-        let destinationURL = meetingDirectory.appendingPathComponent(sanitizedFilename)
+        let destinationURL = meetingDirectory.appendingPathComponent("\(UUID().uuidString.lowercased())-\(sanitizedFilename)")
 
         try FileManager.default.createDirectory(at: meetingDirectory, withIntermediateDirectories: true)
-
-        if FileManager.default.fileExists(atPath: destinationURL.path) {
-            try FileManager.default.removeItem(at: destinationURL)
-        }
 
         try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
 
@@ -760,8 +776,14 @@ actor StorageService {
     }
 
     func deleteMeetingAndFiles(meetingID: String, fileManager: FileManager = .default) throws {
+        guard !meetingID.isEmpty, meetingID != ".", meetingID != "..", !meetingID.contains("/") else {
+            throw StorageError.unsafeMediaPath
+        }
         let relativePaths: [String] = try dbQueue.read { db in
-            try String.fetchAll(
+            guard try Bool.fetchOne(db, sql: "SELECT EXISTS(SELECT 1 FROM meetings WHERE id = ?)", arguments: [meetingID]) == true else {
+                throw StorageError.meetingNotFound(meetingID: meetingID)
+            }
+            return try String.fetchAll(
                 db,
                 sql: """
                 SELECT relative_path
@@ -772,48 +794,49 @@ actor StorageService {
             )
         }
 
-        let fileURLs = relativePaths.map { appSupportDirectoryURL.appendingPathComponent($0) }
         let directories = [
             appSupportDirectoryURL.appendingPathComponent("Recordings", isDirectory: true)
                 .appendingPathComponent(meetingID, isDirectory: true),
             appSupportDirectoryURL.appendingPathComponent("Imports", isDirectory: true)
                 .appendingPathComponent(meetingID, isDirectory: true),
         ]
-
-        for fileURL in fileURLs {
-            guard fileManager.fileExists(atPath: fileURL.path) else {
-                continue
-            }
-
-            do {
-                try fileManager.removeItem(at: fileURL)
-            } catch {
-                throw StorageError.fileDeletionFailed(path: fileURL.path, reason: error.localizedDescription)
+        for relativePath in relativePaths {
+            let resolved = appSupportDirectoryURL.appendingPathComponent(relativePath).resolvingSymlinksInPath().standardizedFileURL
+            guard directories.contains(where: {
+                resolved.path.hasPrefix($0.resolvingSymlinksInPath().standardizedFileURL.path + "/")
+            }) else {
+                throw StorageError.unsafeMediaPath
             }
         }
-
-        for directoryURL in directories {
-            guard fileManager.fileExists(atPath: directoryURL.path) else {
-                continue
+        let trashDirectory = appSupportDirectoryURL.appendingPathComponent("_trash", isDirectory: true)
+            .appendingPathComponent(meetingID, isDirectory: true)
+            .appendingPathComponent(UUID().uuidString.lowercased(), isDirectory: true)
+        var archived: [(original: URL, destination: URL)] = []
+        do {
+            try dbQueue.write { db in
+                for directory in directories where fileManager.fileExists(atPath: directory.path) {
+                    let destination = trashDirectory.appendingPathComponent(directory.deletingLastPathComponent().lastPathComponent, isDirectory: true)
+                    try fileManager.createDirectory(at: trashDirectory, withIntermediateDirectories: true)
+                    try fileManager.moveItem(at: directory, to: destination)
+                    archived.append((directory, destination))
+                }
+                try db.execute(sql: "DELETE FROM meetings WHERE id = ?", arguments: [meetingID])
+                if db.changesCount == 0 {
+                    throw StorageError.meetingNotFound(meetingID: meetingID)
+                }
             }
-
-            do {
-                try fileManager.removeItem(at: directoryURL)
-            } catch {
-                throw StorageError.folderDeletionFailed(path: directoryURL.path, reason: error.localizedDescription)
+        } catch {
+            for item in archived.reversed() {
+                do {
+                    try fileManager.moveItem(at: item.destination, to: item.original)
+                } catch {
+                    throw StorageError.folderDeletionFailed(
+                        path: item.destination.path,
+                        reason: "Audio remains archived here; restoring its original location failed: \(error.localizedDescription)"
+                    )
+                }
             }
-        }
-
-        try dbQueue.write { db in
-            let changesBeforeDelete = db.changesCount
-            try db.execute(
-                sql: "DELETE FROM meetings WHERE id = ?",
-                arguments: [meetingID]
-            )
-            let changesAfterDelete = db.changesCount
-            if changesAfterDelete == changesBeforeDelete {
-                throw StorageError.meetingNotFound(meetingID: meetingID)
-            }
+            throw error
         }
     }
 
@@ -864,12 +887,18 @@ extension StorageService.StorageError: LocalizedError {
         switch self {
         case .transcriptSegmentLocked(let segmentID):
             return "Segment \(segmentID) is locked and cannot be edited."
+        case .transcriptContainsReviewedSegments:
+            return "This transcript contains corrections or locked segments. Regeneration is blocked to preserve your review."
+        case .invalidTranscriptTiming:
+            return "Transcript timestamps must be finite, non-negative, and ordered."
         case .meetingNotFound(let meetingID):
             return "Meeting \(meetingID) was not found."
         case .fileDeletionFailed(let path, let reason):
             return "Failed to delete file at \(path): \(reason)"
         case .folderDeletionFailed(let path, let reason):
             return "Failed to delete folder at \(path): \(reason)"
+        case .unsafeMediaPath:
+            return "Meeting audio path is outside its storage folder. No files were changed."
         }
     }
 }

@@ -41,8 +41,11 @@ final class HomeViewModel: ObservableObject {
     }
 
     func importMediaFile(at url: URL) async {
+        guard !isImporting else { return }
         isImporting = true
         defer { isImporting = false }
+        let accessed = url.startAccessingSecurityScopedResource()
+        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
 
         do {
             let meetingID = try await importService.importMedia(from: url, languageMode: .mixed)

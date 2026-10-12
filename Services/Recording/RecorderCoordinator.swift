@@ -13,7 +13,6 @@ actor RecorderCoordinator {
         var meetingID: String
         var jobID: String
         var startedAt: Date
-        var createdMeeting: Bool
         var captureMicrophone: Bool
         var captureSystemAudio: Bool
         var totalRecordedSeconds: Double
@@ -100,27 +99,24 @@ actor RecorderCoordinator {
         state = .starting
         note = "Preparing capture devices"
 
-        let meetingID = try await resolveMeetingID(using: configuration)
-        let createdMeeting = configuration.meetingID == nil
-        let job = try await jobQueue.beginRecordingJob(meetingID: meetingID)
-
-        activeSession = ActiveSession(
-            meetingID: meetingID,
-            jobID: job.id,
-            startedAt: Date(),
-            createdMeeting: createdMeeting,
-            captureMicrophone: configuration.captureMicrophone,
-            captureSystemAudio: configuration.captureSystemAudio,
-            totalRecordedSeconds: 0,
-            segmentRelativePaths: [],
-            currentSegmentIndex: 0,
-            currentSegmentStartedAt: nil
-        )
-        isHandlingWriterFailure = false
-        hasLoggedFormatMismatch = false
-        hasLoggedInvalidBuffer = false
-
         do {
+            let meetingID = try await resolveMeetingID(using: configuration)
+            let job = try await jobQueue.beginRecordingJob(meetingID: meetingID)
+            activeSession = ActiveSession(
+                meetingID: meetingID,
+                jobID: job.id,
+                startedAt: Date(),
+                captureMicrophone: configuration.captureMicrophone,
+                captureSystemAudio: configuration.captureSystemAudio,
+                totalRecordedSeconds: 0,
+                segmentRelativePaths: [],
+                currentSegmentIndex: 0,
+                currentSegmentStartedAt: nil
+            )
+            isHandlingWriterFailure = false
+            hasLoggedFormatMismatch = false
+            hasLoggedInvalidBuffer = false
+
             try await startNewSegment(captureMicrophone: configuration.captureMicrophone, captureSystemAudio: configuration.captureSystemAudio)
             startCheckpointLoop()
             state = .recording
@@ -133,9 +129,6 @@ actor RecorderCoordinator {
             note = "Recording start failed: \(error.localizedDescription)"
             if let failedSession {
                 try? await jobQueue.failRecordingJob(jobID: failedSession.jobID, errorMessage: error.localizedDescription)
-                if failedSession.createdMeeting {
-                    try? await storageService.deleteMeetingAndFiles(meetingID: failedSession.meetingID)
-                }
             }
             activeSession = nil
             throw error
@@ -147,7 +140,7 @@ actor RecorderCoordinator {
             return
         }
 
-        state = .paused
+        state = .stopping
         note = reason == .sleep ? "Paused for sleep" : "Paused"
 
         await stopInputsAndCloseWriter()
@@ -156,6 +149,7 @@ actor RecorderCoordinator {
         if let jobID = activeSession?.jobID {
             try? await jobQueue.pauseRecordingJob(jobID: jobID)
         }
+        state = .paused
     }
 
     func resumeRecording(captureMicrophone: Bool? = nil, captureSystemAudio: Bool? = nil) async throws {
@@ -166,12 +160,19 @@ actor RecorderCoordinator {
             throw RecorderError.noCoordinatorState
         }
 
+        state = .starting
         note = "Resuming recording"
         let micSetting = captureMicrophone ?? activeSession.captureMicrophone
         let systemSetting = captureSystemAudio ?? activeSession.captureSystemAudio
         self.activeSession?.captureMicrophone = micSetting
         self.activeSession?.captureSystemAudio = systemSetting
-        try await startNewSegment(captureMicrophone: micSetting, captureSystemAudio: systemSetting)
+        do {
+            try await startNewSegment(captureMicrophone: micSetting, captureSystemAudio: systemSetting)
+        } catch {
+            state = .paused
+            note = "Resume failed: \(error.localizedDescription)"
+            throw error
+        }
 
         try? await jobQueue.updateRecordingProgress(jobID: activeSession.jobID, progress: estimatedProgress())
 
@@ -180,7 +181,7 @@ actor RecorderCoordinator {
     }
 
     func stopRecording() async {
-        guard state == .recording || state == .paused || state == .starting else {
+        guard state == .recording || state == .paused else {
             return
         }
 
@@ -201,9 +202,6 @@ actor RecorderCoordinator {
 
         guard !activeSession.segmentRelativePaths.isEmpty else {
             try? await jobQueue.failRecordingJob(jobID: activeSession.jobID, errorMessage: "No playable audio was captured.")
-            if activeSession.createdMeeting {
-                try? await storageService.deleteMeetingAndFiles(meetingID: activeSession.meetingID)
-            }
             self.activeSession = nil
             state = .failed
             note = "No playable audio was captured. Check microphone input and try again."
@@ -434,7 +432,6 @@ actor RecorderCoordinator {
 
                 if let outputURL = writer.outputURL {
                     guard hasPersistedAudioContent(at: outputURL, durationSeconds: segmentDuration) else {
-                        try? FileManager.default.removeItem(at: outputURL)
                         if source == .system {
                             note = "System audio stream produced no playable samples for this segment."
                         }
@@ -490,7 +487,11 @@ actor RecorderCoordinator {
             guard let self else { return }
             while !Task.isCancelled {
                 let nanos: UInt64 = await self.onBattery ? 20_000_000_000 : 10_000_000_000
-                try? await Task.sleep(nanoseconds: nanos)
+                do {
+                    try await Task.sleep(nanoseconds: nanos)
+                } catch {
+                    return
+                }
                 await self.saveCheckpoint(reason: .periodic)
 
                 if let jobID = await self.activeSession?.jobID {

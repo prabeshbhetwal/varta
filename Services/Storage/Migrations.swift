@@ -187,6 +187,29 @@ enum VartaMigrations {
             }
         }
 
+        migrator.registerMigration("004_search_corrected_transcript") { db in
+            try db.execute(sql: "DROP TRIGGER transcript_segments_au")
+            try db.execute(sql: """
+            CREATE TRIGGER transcript_segments_au AFTER UPDATE OF text, corrected_text, meeting_id ON transcript_segments BEGIN
+                UPDATE search_fts
+                SET
+                    meeting_id = NEW.meeting_id,
+                    meeting_title = COALESCE((SELECT title FROM meetings WHERE id = NEW.meeting_id), ''),
+                    segment_text = COALESCE(NEW.corrected_text, NEW.text)
+                WHERE record_type = 'segment' AND record_id = CAST(OLD.id AS TEXT);
+            END
+            """)
+            try db.execute(sql: """
+            UPDATE search_fts
+            SET segment_text = (
+                SELECT COALESCE(corrected_text, text)
+                FROM transcript_segments
+                WHERE id = CAST(search_fts.record_id AS INTEGER)
+            )
+            WHERE record_type = 'segment'
+            """)
+        }
+
         return migrator
     }
 }

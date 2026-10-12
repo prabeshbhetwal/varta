@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreGraphics
 import Foundation
 
 @MainActor
@@ -11,6 +12,15 @@ final class PermissionsService: ObservableObject {
     }
 
     @Published private(set) var microphoneState: PermissionState = .notDetermined
+    @Published private(set) var screenRecordingState: PermissionState = .notDetermined
+
+    func refreshScreenRecording() {
+        screenRecordingState = CGPreflightScreenCaptureAccess() ? .granted : .notDetermined
+    }
+
+    func requestScreenRecordingPermission() {
+        screenRecordingState = CGRequestScreenCaptureAccess() ? .granted : .denied
+    }
 
     func refreshMicrophone() {
         microphoneState = Self.mapMicrophoneState(AVCaptureDevice.authorizationStatus(for: .audio))

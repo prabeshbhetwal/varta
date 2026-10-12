@@ -22,28 +22,15 @@ private struct TranscriptOnlyView: View {
                     Task { await viewModel.generateTranscript() }
                 }.disabled(viewModel.isGeneratingTranscript)
             }
-            if viewModel.segments.isEmpty {
-                ContentUnavailableView("Transcript not generated yet", systemImage: "text.quote")
-            } else {
-                List(viewModel.segments) { seg in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(seg.effectiveText)
-                        Text("[\(timecode(seg.startSeconds)) - \(timecode(seg.endSeconds))]")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .listStyle(.inset)
+            Text("Transcription is unavailable in this development build. Your audio remains saved locally.")
+                .foregroundStyle(.secondary)
+            TranscriptTabView(viewModel: viewModel)
+            HStack {
+                Button("Copy Transcript") { viewModel.copyTranscriptToClipboard() }
+                Button("Export Transcript") { viewModel.exportTranscript() }
+                Button("Show Audio in Finder") { viewModel.openRecordingsFolderInFinder() }
             }
         }
         .padding(16)
-        .task { await viewModel.refresh() }
-    }
-
-    private func timecode(_ seconds: Double) -> String {
-        let total = max(Int(seconds.rounded()), 0)
-        let m = total / 60
-        let s = total % 60
-        return String(format: "%02d:%02d", m, s)
     }
 }

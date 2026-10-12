@@ -19,11 +19,10 @@ final class MeetingDetailViewModel: ObservableObject {
     private let storageService: StorageService
     private let transcriptionService: TranscriptionService
 
-    init(meetingID: String, storageService: StorageService) {
+    init(meetingID: String, storageService: StorageService, memoryManager: MemoryManager) {
         self.meetingID = meetingID
         self.storageService = storageService
 
-        let memoryManager = MemoryManager()
         self.transcriptionService = TranscriptionService(storageService: storageService, memoryManager: memoryManager)
     }
 
@@ -36,6 +35,9 @@ final class MeetingDetailViewModel: ObservableObject {
             meetingTitle = (try? await storageService.meetingTitle(meetingID: meetingID)) ?? ""
             appSupportDirectoryURL = await storageService.appSupportDirectory()
             recordingsFolderURL = await storageService.recordingsDirectory(meetingID: meetingID)
+            if let first = importedMedia.first, let root = appSupportDirectoryURL {
+                recordingsFolderURL = root.appendingPathComponent(first.relativePath).deletingLastPathComponent()
+            }
         } catch {
             segments = []
             importedMedia = []

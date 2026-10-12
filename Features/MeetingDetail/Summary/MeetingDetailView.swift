@@ -6,11 +6,11 @@ struct MeetingDetailView: View {
 
     @StateObject private var viewModel: MeetingDetailViewModel
 
-    init(meetingID: String, storageService: StorageService) {
+    init(meetingID: String, storageService: StorageService, memoryManager: MemoryManager) {
         self.meetingID = meetingID
         self.storageService = storageService
         _viewModel = StateObject(
-            wrappedValue: MeetingDetailViewModel(meetingID: meetingID, storageService: storageService)
+            wrappedValue: MeetingDetailViewModel(meetingID: meetingID, storageService: storageService, memoryManager: memoryManager)
         )
     }
 

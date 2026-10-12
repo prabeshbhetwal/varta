@@ -1,0 +1,8 @@
+.DS_Store
+**/xcuserdata/
+*.profraw
+.audit/
+.audit*.log
+.code-review-graph/
+build/
+DerivedData/

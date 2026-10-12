@@ -2,6 +2,10 @@
 import Foundation
 
 final class RecordingWriter: @unchecked Sendable {
+    struct FinishedSegment: Sendable {
+        let durationSeconds: Double
+        let firstPresentationTimeSeconds: Double?
+    }
     enum WriterError: Error {
         case inputNotReady
         case failedToCreateWriter
@@ -17,6 +21,7 @@ final class RecordingWriter: @unchecked Sendable {
     private var expectedInputSignature: InputSignature?
     private var firstPTS: CMTime = .invalid
     private var lastPTS: CMTime = .zero
+    private var lastEndPTS: CMTime = .zero
     private var hasStartedSession = false
 
     private(set) var outputURL: URL?
@@ -40,6 +45,7 @@ final class RecordingWriter: @unchecked Sendable {
         self.outputURL = outputURL
         firstPTS = .invalid
         lastPTS = .zero
+        lastEndPTS = .zero
         hasStartedSession = false
         expectedInputSignature = nil
         audioInput = nil
@@ -103,7 +109,7 @@ final class RecordingWriter: @unchecked Sendable {
 
             let normalizedSampleBuffer = normalizedBuffer.sampleBuffer
             let presentation = CMSampleBufferGetPresentationTimeStamp(normalizedSampleBuffer)
-            guard presentation != .invalid else {
+            guard presentation.isNumeric else {
                 throw WriterError.invalidSampleBuffer("Missing presentation timestamp.")
             }
 
@@ -126,45 +132,48 @@ final class RecordingWriter: @unchecked Sendable {
             }
 
             lastPTS = presentation
+            lastEndPTS = presentation + CMSampleBufferGetDuration(normalizedSampleBuffer)
         }
     }
 
     func finishWriting() async throws -> Double {
+        try await finishSegment().durationSeconds
+    }
+
+    func finishSegment() async throws -> FinishedSegment {
         try await withCheckedThrowingContinuation { continuation in
             queue.async { [self] in
                 guard let writer = self.writer else {
-                    continuation.resume(returning: 0)
+                    continuation.resume(returning: FinishedSegment(durationSeconds: 0, firstPresentationTimeSeconds: nil))
                     return
                 }
 
                 if writer.status == .unknown {
                     cleanup()
-                    continuation.resume(returning: 0)
+                    continuation.resume(returning: FinishedSegment(durationSeconds: 0, firstPresentationTimeSeconds: nil))
                     return
                 }
 
                 audioInput?.markAsFinished()
-                writer.finishWriting { [weak self] in
-                    guard let self else {
-                        continuation.resume(returning: 0)
-                        return
-                    }
+                writer.finishWriting { [self] in
+                    queue.async { [self] in
+                        let status = self.writer?.status ?? .unknown
+                        let errorDescription = self.writer?.error?.localizedDescription ?? "unknown"
+                        let duration: Double
+                        if self.hasStartedSession {
+                            duration = max(CMTimeGetSeconds(self.lastEndPTS - self.firstPTS), 0)
+                        } else {
+                            duration = 0
+                        }
 
-                    let status = self.writer?.status ?? .unknown
-                    let errorDescription = self.writer?.error?.localizedDescription ?? "unknown"
-                    let duration: Double
-                    if self.hasStartedSession {
-                        duration = max(CMTimeGetSeconds(self.lastPTS - self.firstPTS), 0)
-                    } else {
-                        duration = 0
-                    }
+                        let firstTime = self.hasStartedSession ? CMTimeGetSeconds(self.firstPTS) : nil
+                        self.cleanup()
 
-                    self.cleanup()
-
-                    if status == .completed || status == .cancelled {
-                        continuation.resume(returning: duration)
-                    } else {
-                        continuation.resume(throwing: WriterError.failedToFinishWriting(errorDescription))
+                        if status == .completed {
+                            continuation.resume(returning: FinishedSegment(durationSeconds: duration, firstPresentationTimeSeconds: firstTime))
+                        } else {
+                            continuation.resume(throwing: WriterError.failedToFinishWriting(errorDescription))
+                        }
                     }
                 }
             }
@@ -204,7 +213,8 @@ final class RecordingWriter: @unchecked Sendable {
             throw WriterError.unsupportedAudioFormat("Only linear PCM input is supported, format id=\(asbd.mFormatID).")
         }
 
-        guard asbd.mSampleRate > 0, asbd.mChannelsPerFrame > 0 else {
+        guard asbd.mSampleRate.isFinite, asbd.mSampleRate >= 1,
+              asbd.mSampleRate <= Double(Int32.max), asbd.mChannelsPerFrame > 0 else {
             throw WriterError.invalidSampleBuffer("Invalid sample rate or channel count in audio format.")
         }
         guard asbd.mChannelsPerFrame <= 2 else {
@@ -342,7 +352,11 @@ final class RecordingWriter: @unchecked Sendable {
                     let sourcePointer = sourceData.advanced(by: byteOffset)
                     let sample: Int16
                     if isFloat {
-                        var value = sourcePointer.loadUnaligned(as: Float.self)
+                        let bits = sourcePointer.loadUnaligned(as: UInt32.self)
+                        var value = Float(bitPattern: isBigEndian ? UInt32(bigEndian: bits) : UInt32(littleEndian: bits))
+                        guard value.isFinite else {
+                            throw WriterError.invalidSampleBuffer("PCM audio contains a non-finite sample.")
+                        }
                         value = min(max(value, -1), 1)
                         sample = Int16((value * Float(Int16.max)).rounded())
                     } else {
@@ -460,6 +474,70 @@ final class RecordingWriter: @unchecked Sendable {
         hasStartedSession = false
         firstPTS = .invalid
         lastPTS = .zero
+        lastEndPTS = .zero
+    }
+}
+
+// The capture callback keeps this router; swapping writers never stops the audio device.
+final class RecordingWriterRouter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var writer: RecordingWriter?
+    private let captureClock: RecordingCaptureClock
+
+    init(writer: RecordingWriter, captureClock: RecordingCaptureClock) {
+        self.writer = writer
+        self.captureClock = captureClock
+    }
+
+    func append(sampleBuffer: CMSampleBuffer) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        if captureClock.accepts(sampleBuffer: sampleBuffer) { try writer?.append(sampleBuffer: sampleBuffer) }
+    }
+
+    func replace(with writer: RecordingWriter?) {
+        lock.lock()
+        self.writer = writer
+        lock.unlock()
+    }
+}
+
+final class RecordingCaptureClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private let durationLimit: Double
+    private var originSeconds: Double?
+    private var reachedLimit = false
+
+    init(durationLimit: Double) { self.durationLimit = durationLimit }
+
+    func accepts(sampleBuffer: CMSampleBuffer) -> Bool {
+        let start = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
+        var duration = CMTimeGetSeconds(CMSampleBufferGetDuration(sampleBuffer))
+        let frameCount = CMSampleBufferGetNumSamples(sampleBuffer)
+        if frameCount > 0, let description = CMSampleBufferGetFormatDescription(sampleBuffer),
+           CMFormatDescriptionGetMediaType(description) == kCMMediaType_Audio,
+           let basic = CMAudioFormatDescriptionGetStreamBasicDescription(description),
+           basic.pointee.mFormatID == kAudioFormatLinearPCM,
+           basic.pointee.mSampleRate.isFinite, basic.pointee.mSampleRate >= 1,
+           basic.pointee.mSampleRate <= Double(Int32.max) {
+            // Match writer normalisation even when capture omits or misstates raw timing duration.
+            duration = Double(frameCount) / basic.pointee.mSampleRate
+        }
+        guard start.isFinite, duration.isFinite, duration >= 0 else { return true }
+        lock.lock()
+        defer { lock.unlock() }
+        originSeconds = min(originSeconds ?? start, start)
+        if start - (originSeconds ?? start) + duration > durationLimit {
+            reachedLimit = true
+            return false
+        }
+        return true
+    }
+
+    func hasReachedLimit() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return reachedLimit
     }
 }
 

@@ -9,7 +9,7 @@ struct OnboardingView: View {
                 .font(.largeTitle)
                 .bold()
 
-            Text("Grant microphone access when you are ready to record local audio.")
+            Text("Record or import audio locally. Select local models in Settings to transcribe, summarise and translate.")
                 .foregroundStyle(.secondary)
 
             PermissionStatusRow(title: "Microphone", state: appModel.permissions.microphoneState.rawValue)
@@ -24,6 +24,13 @@ struct OnboardingView: View {
 
             Divider()
 
+            Text("macOS requires Screen Recording permission to capture system audio. Varta uses this permission only to extract audio unless you explicitly choose to capture video in a future version.")
+                .foregroundStyle(.secondary)
+            PermissionStatusRow(title: "Screen Recording", state: appModel.permissions.screenRecordingState.rawValue)
+            Button("Request Screen Recording") {
+                appModel.permissions.requestScreenRecordingPermission()
+            }
+
             Button("Continue to App") {
                 Task {
                     await appModel.completeOnboarding()
@@ -35,6 +42,7 @@ struct OnboardingView: View {
         .frame(minWidth: 760, minHeight: 520, alignment: .topLeading)
         .task {
             appModel.permissions.refreshMicrophone()
+            appModel.permissions.refreshScreenRecording()
         }
     }
 }

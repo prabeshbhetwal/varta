@@ -32,6 +32,7 @@ enum PromptTemplateService {
             }
 
             let defaultContent = bundledPromptContent(for: template, bundle: bundle)
+            guard !defaultContent.isEmpty else { throw LocalModelError.missingAsset("Bundled prompt: \(template.filename)") }
             try defaultContent.write(to: destinationURL, atomically: true, encoding: .utf8)
         }
     }
@@ -47,32 +48,63 @@ enum PromptTemplateService {
 
         if !fileManager.fileExists(atPath: promptURL.path) {
             let fallback = bundledPromptContent(for: template, bundle: .main)
+            guard !fallback.isEmpty else { throw LocalModelError.missingAsset("Bundled prompt: \(template.filename)") }
             return fallback
         }
 
-        return try String(contentsOf: promptURL, encoding: .utf8)
+        let size = try promptURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+        guard size <= 64_000 else { throw LocalModelError.invalidOutput("Prompt \(template.filename) exceeds 64 KB.") }
+        let text = try String(contentsOf: promptURL, encoding: .utf8)
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw LocalModelError.invalidOutput("Prompt \(template.filename) is empty.")
+        }
+        return text
+    }
+
+    static func render(_ template: PromptTemplate, context: [String: String], appSupportDirectoryURL: URL) throws -> String {
+        try render(instruction: instruction(for: template, appSupportDirectoryURL: appSupportDirectoryURL), context: context)
+    }
+
+    static func snapshot(appSupportDirectoryURL: URL) throws -> [PromptTemplate: String] {
+        try Dictionary(uniqueKeysWithValues: PromptTemplate.allCases.map {
+            ($0, try instruction(for: $0, appSupportDirectoryURL: appSupportDirectoryURL))
+        })
+    }
+
+    static func render(_ template: PromptTemplate, context: [String: String], snapshot: [PromptTemplate: String]) throws -> String {
+        guard let instruction = snapshot[template] else { throw LocalModelError.missingAsset("Prompt: \(template.filename)") }
+        return try render(instruction: instruction, context: context)
+    }
+
+    private static func render(instruction: String, context: [String: String]) throws -> String {
+        let data = try JSONEncoder().encode(context)
+        return instruction + "\n\n" + String(decoding: data, as: UTF8.self)
+    }
+
+    private static func instruction(for template: PromptTemplate, appSupportDirectoryURL: URL) throws -> String {
+        let instruction = try loadPrompt(for: template, appSupportDirectoryURL: appSupportDirectoryURL)
+        var contract = ""
+        if template == .finalSummary || template == .calendarCandidates {
+            let bundled = bundledPromptContent(for: template, bundle: .main)
+            guard !bundled.isEmpty else {
+                throw LocalModelError.missingAsset("Structured response contract for \(template.filename)")
+            }
+            // Keep custom/older prompt files; the bundled schema remains an invariant.
+            contract = "\n\n" + bundled
+        }
+        return instruction + contract
     }
 
     private static func bundledPromptContent(for template: PromptTemplate, bundle: Bundle) -> String {
         let name = template.rawValue
-        if let url = bundle.url(forResource: name, withExtension: "txt", subdirectory: "Prompts"),
+        if let url = bundle.url(forResource: name, withExtension: "txt", subdirectory: "Prompts")
+            ?? bundle.url(forResource: name, withExtension: "txt"),
            let text = try? String(contentsOf: url, encoding: .utf8),
            !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return text
         }
 
-        return defaultPromptContents[template] ?? ""
+        return ""
     }
 
-    private static let defaultPromptContents: [PromptTemplate: String] = [
-        .windowSummary: "Summarise this transcript window in 3-5 concise bullet points.",
-        .sectionSynthesis: "Combine these window summaries into one section summary with key points and risks.",
-        .finalSummary: "Create concise, detailed, and bullet summaries from the section summaries.",
-        .actionItems: "Extract action items as an owner + task + due date list when available.",
-        .decisions: "Extract explicit decisions and include rationale if present.",
-        .unresolvedQuestions: "List unresolved questions and who should answer each question when available.",
-        .followUpEmail: "Draft a professional follow-up email using summary, decisions, and action items.",
-        .calendarCandidates: "Suggest possible follow-up events with title, date hints, duration, and reason.",
-        .translation: "Translate output while preserving factual meaning and structure."
-    ]
 }

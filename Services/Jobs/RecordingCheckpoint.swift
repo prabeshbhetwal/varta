@@ -16,4 +16,7 @@ struct RecordingCheckpointPayload: Codable, Sendable {
     var lastSegmentDurationSeconds: Double
     var reason: Reason
     var recordedAt: Date
+    var captureMicrophone: Bool? = nil
+    var captureSystemAudio: Bool? = nil
+    var nextSegmentIndex: Int? = nil
 }

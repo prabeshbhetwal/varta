@@ -1,0 +1,74 @@
+name: Native checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    if: github.event.repository.private == false
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Check bounded native framework fixtures
+        run: |
+          python3 Tests/native-framework-tests.py
+          python3 Native/prepare-vad-fixtures.py --self-test
+      - name: Prepare verified whisper.cpp artifact
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          vendor=".audit/vendor/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$vendor"
+          curl --fail --location --silent --show-error --retry 2 --max-time 120 \
+            'https://github.com/ggml-org/whisper.cpp/releases/download/v1.8.3/whisper-v1.8.3-xcframework.zip' \
+            --output "$vendor/whisper.zip"
+          python3 Native/prepare-whisper.py \
+            --archive "$vendor/whisper.zip" \
+            --sha256 a970006f256c8e689bc79e73f7fa7ddb8c1ed2703ad43ee48eb545b5bb6de6af \
+            --extract-directory "$vendor/extracted" \
+            --config-output .audit/native/whisper.generated.xcconfig
+      - name: Prepare small verified native VAD fixtures
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          python3 Native/prepare-vad-fixtures.py \
+            --prepared-config .audit/native/whisper.generated.xcconfig \
+            --output-directory .audit/ci-vad
+      - name: Build and run native tests with VAD fixtures
+        timeout-minutes: 35
+        run: |
+          set -euo pipefail
+          xcodebuild -workspace Varta.xcworkspace -scheme VartaTests \
+            -destination 'platform=macOS,arch=arm64' \
+            -jobs 2 -parallel-testing-enabled NO \
+            -derivedDataPath .audit/ci-derived-data \
+            -resultBundlePath .audit/ci-test-results.xcresult \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            SWIFT_ACTIVE_COMPILATION_CONDITIONS='$(inherited) VARTA_REQUIRE_NATIVE_ENGINES' \
+            test > .audit/native-tests.log 2>&1
+      - name: Preserve native check evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-check-evidence
+          path: |
+            .audit/native-tests.log
+            .audit/ci-test-results.xcresult
+            .audit/ci-vad/fixture-manifest.json
+            .audit/ci-vad/*-mit.txt
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7

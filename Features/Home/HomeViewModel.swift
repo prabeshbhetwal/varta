@@ -7,6 +7,11 @@ final class HomeViewModel: ObservableObject {
     @Published var isImporting = false
     @Published var isDeleting = false
     @Published var errorMessage: String?
+    @Published var searchQuery = ""
+    @Published private(set) var searchResults: [TranscriptSearchResult] = []
+    @Published var selectedSearchResult: TranscriptSearchResult?
+    @Published private(set) var recoverableRecordingJobs: [JobRecord] = []
+    @Published private(set) var meetingContentRevisions: [String: Int] = [:]
 
     private let storageService: StorageService
     private let importService: ImportPipelineService
@@ -20,6 +25,7 @@ final class HomeViewModel: ObservableObject {
     func refreshMeetings() async {
         do {
             meetings = try await storageService.listMeetings()
+            recoverableRecordingJobs = try await storageService.jobs(statuses: [.paused, .failed], type: .recording)
             if selectedMeetingID == nil || !meetings.contains(where: { $0.id == selectedMeetingID }) {
                 selectedMeetingID = meetings.first?.id
             }
@@ -37,12 +43,16 @@ final class HomeViewModel: ObservableObject {
 
         if meetings.contains(where: { $0.id == meetingID }) {
             selectedMeetingID = meetingID
+            meetingContentRevisions[meetingID, default: 0] += 1
         }
     }
 
     func importMediaFile(at url: URL) async {
+        guard !isImporting else { return }
         isImporting = true
         defer { isImporting = false }
+        let accessed = url.startAccessingSecurityScopedResource()
+        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
 
         do {
             let meetingID = try await importService.importMedia(from: url, languageMode: .mixed)
@@ -51,6 +61,29 @@ final class HomeViewModel: ObservableObject {
         } catch {
             errorMessage = "Import failed: \(error.localizedDescription)"
         }
+    }
+
+    func searchTranscripts() async {
+        let query = searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else {
+            searchResults = []
+            selectedSearchResult = nil
+            return
+        }
+        do {
+            let results = try await storageService.searchTranscript(query: query)
+            try Task.checkCancellation()
+            guard query == searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
+            searchResults = results
+        } catch is CancellationError {
+        } catch {
+            errorMessage = "Search failed: \(error.localizedDescription)"
+        }
+    }
+
+    func selectSearchResult(_ result: TranscriptSearchResult) {
+        selectedSearchResult = result
+        selectedMeetingID = result.meetingID
     }
 
     func deleteMeeting(meetingID: String) async {

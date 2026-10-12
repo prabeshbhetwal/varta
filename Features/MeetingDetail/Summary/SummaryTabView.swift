@@ -1,49 +1,51 @@
 import SwiftUI
 
-// Deprecated in transcript-first UI. Kept to avoid breaking build where referenced.
 struct SummaryTabView: View {
     @ObservedObject var viewModel: MeetingDetailViewModel
-    var body: some View {
-        // Forward to MeetingDetailView's simplified content by embedding TranscriptOnlyView
-        TranscriptOnlyView(viewModel: viewModel)
-    }
-}
-
-// A lightweight transcript-only view used by SummaryTabView for compatibility.
-private struct TranscriptOnlyView: View {
-    @ObservedObject var viewModel: MeetingDetailViewModel
+    @State private var summaryStyle = "Concise"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Recording Transcript").font(.title3).bold()
+                Picker("Summary format", selection: $summaryStyle) {
+                    Text("Concise").tag("Concise")
+                    Text("Detailed").tag("Detailed")
+                    Text("Bullets").tag("Bullets")
+                }.pickerStyle(.segmented)
                 Spacer()
-                Button("Generate Transcript") {
-                    Task { await viewModel.generateTranscript() }
-                }.disabled(viewModel.isGeneratingTranscript)
+                Button("Generate / Resume Summary & Outputs") { viewModel.startSummary() }
+                    .disabled(viewModel.isProcessing || viewModel.segments.isEmpty)
+                    .help("Resume saved processing when transcript and prompts are unchanged.")
             }
-            if viewModel.segments.isEmpty {
-                ContentUnavailableView("Transcript not generated yet", systemImage: "text.quote")
-            } else {
-                List(viewModel.segments) { seg in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(seg.effectiveText)
-                        Text("[\(timecode(seg.startSeconds)) - \(timecode(seg.endSeconds))]")
-                            .font(.caption)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    if let summary = viewModel.summary {
+                        Text(summaryStyle == "Detailed" ? summary.detailed : summaryStyle == "Bullets" ? summary.bullets : summary.concise)
+                            .frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
+                    } else {
+                        Text("Generate a transcript, review corrections, then generate a local summary.")
                             .foregroundStyle(.secondary)
                     }
-                }
-                .listStyle(.inset)
+                    if let actions = viewModel.output(.actionItems) {
+                        GeneratedTextSection(title: "Action Items", content: actions)
+                    }
+                    if let decisions = viewModel.output(.decisions) {
+                        GeneratedTextSection(title: "Decisions", content: decisions)
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .padding(16)
-        .task { await viewModel.refresh() }
+        .padding(12)
     }
+}
 
-    private func timecode(_ seconds: Double) -> String {
-        let total = max(Int(seconds.rounded()), 0)
-        let m = total / 60
-        let s = total % 60
-        return String(format: "%02d:%02d", m, s)
+struct GeneratedTextSection: View {
+    let title: String
+    let content: String
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.headline)
+            Text(content).frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
+        }
     }
 }

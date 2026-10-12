@@ -4,9 +4,15 @@ import GRDB
 actor StorageService {
     enum StorageError: Error {
         case transcriptSegmentLocked(segmentID: Int64)
+        case transcriptContainsReviewedSegments(meetingID: String)
+        case invalidTranscriptTiming
         case meetingNotFound(meetingID: String)
         case fileDeletionFailed(path: String, reason: String)
         case folderDeletionFailed(path: String, reason: String)
+        case unsafeMediaPath
+        case transcriptChanged
+        case generatedContentChanged
+        case sourceMediaChanged
     }
 
     let databaseURL: URL
@@ -15,7 +21,10 @@ actor StorageService {
     private let appSupportDirectoryURL: URL
 
     init(databaseURL: URL? = nil, fileManager: FileManager = .default) throws {
-        let resolvedAppSupportDirectory = try Self.applicationSupportDirectory(fileManager: fileManager)
+        // Explicit databases keep all companion files isolated from personal app data.
+        let resolvedAppSupportDirectory = try databaseURL.map {
+            $0.deletingPathExtension().appendingPathExtension("files")
+        } ?? Self.applicationSupportDirectory(fileManager: fileManager)
         let resolvedDatabaseURL = databaseURL ?? resolvedAppSupportDirectory.appendingPathComponent("varta.sqlite")
 
         try fileManager.createDirectory(
@@ -145,6 +154,9 @@ actor StorageService {
                     duration_seconds,
                     sample_rate_hz,
                     channel_count,
+                    source,
+                    segment_index,
+                    timeline_offset_seconds,
                     CAST(strftime('%s', created_at) AS REAL) AS created_at_ts
                 FROM audio_files
                 WHERE meeting_id = ?
@@ -163,7 +175,10 @@ actor StorageService {
                     durationSeconds: row["duration_seconds"],
                     sampleRateHz: row["sample_rate_hz"],
                     channelCount: row["channel_count"],
-                    createdAt: Date(timeIntervalSince1970: row["created_at_ts"] ?? 0)
+                    createdAt: Date(timeIntervalSince1970: row["created_at_ts"] ?? 0),
+                    source: row["source"],
+                    segmentIndex: row["segment_index"],
+                    timelineOffsetSeconds: row["timeline_offset_seconds"]
                 )
             }
         }
@@ -174,8 +189,15 @@ actor StorageService {
         relativePath: String,
         originalFilename: String,
         format: String,
-        durationSeconds: Double?
+        durationSeconds: Double?,
+        source: String? = nil,
+        segmentIndex: Int? = nil,
+        timelineOffsetSeconds: Double? = nil
     ) throws {
+        guard !relativePath.hasPrefix("/"), !relativePath.split(separator: "/").contains(".."),
+              durationSeconds.map({ $0.isFinite && $0 >= 0 }) ?? true,
+              timelineOffsetSeconds.map({ $0.isFinite && $0 >= 0 }) ?? true,
+              segmentIndex.map({ $0 >= 0 }) ?? true else { throw StorageError.unsafeMediaPath }
         try dbQueue.write { db in
             try db.execute(
                 sql: """
@@ -186,9 +208,12 @@ actor StorageService {
                     original_filename,
                     format,
                     duration_seconds,
+                    source,
+                    segment_index,
+                    timeline_offset_seconds,
                     created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 """,
                 arguments: [
                     UUID().uuidString.lowercased(),
@@ -197,6 +222,9 @@ actor StorageService {
                     originalFilename,
                     format,
                     durationSeconds,
+                    source,
+                    segmentIndex,
+                    timelineOffsetSeconds,
                 ]
             )
 
@@ -209,6 +237,25 @@ actor StorageService {
 
     func replaceTranscriptSegments(meetingID: String, segments: [NewTranscriptSegment]) throws {
         try dbQueue.write { db in
+            try Self.replaceTranscriptSegments(db: db, meetingID: meetingID, segments: segments)
+        }
+    }
+
+    private static func replaceTranscriptSegments(db: Database, meetingID: String, segments: [NewTranscriptSegment]) throws {
+        guard segments.allSatisfy({
+            $0.startSeconds.isFinite && $0.endSeconds.isFinite &&
+                $0.startSeconds >= 0 && $0.endSeconds >= $0.startSeconds
+        }) else {
+            throw StorageError.invalidTranscriptTiming
+        }
+            let reviewedCount = try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM transcript_segments WHERE meeting_id = ? AND (is_locked = 1 OR corrected_text IS NOT NULL)",
+                arguments: [meetingID]
+            ) ?? 0
+            guard reviewedCount == 0 else {
+                throw StorageError.transcriptContainsReviewedSegments(meetingID: meetingID)
+            }
             try db.execute(
                 sql: "DELETE FROM transcript_segments WHERE meeting_id = ?",
                 arguments: [meetingID]
@@ -245,7 +292,6 @@ actor StorageService {
                 sql: "UPDATE meetings SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
                 arguments: [meetingID]
             )
-        }
     }
 
     func transcriptSegments(meetingID: String) throws -> [TranscriptSegment] {
@@ -409,6 +455,158 @@ actor StorageService {
         }
     }
 
+    func transcriptRevision(meetingID: String) throws -> Int {
+        try dbQueue.read { db in try Self.transcriptRevision(db: db, meetingID: meetingID) }
+    }
+
+    private static func transcriptRevision(db: Database, meetingID: String) throws -> Int {
+        guard let revision = try Int.fetchOne(db, sql: "SELECT transcript_revision FROM meetings WHERE id = ?", arguments: [meetingID]) else {
+            throw StorageError.meetingNotFound(meetingID: meetingID)
+        }
+        return revision
+    }
+
+    func saveMeetingOutputs(meetingID: String, outputs: MeetingOutputs, expectedTranscriptRevision: Int, jobID: String? = nil) throws {
+        guard Set(outputs.outputs.map(\.type)) == Set(GeneratedOutputType.allCases),
+              outputs.outputs.count == GeneratedOutputType.allCases.count,
+              outputs.outputs.allSatisfy({ $0.language == .english && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
+            throw LocalModelError.invalidOutput("Generated meeting content is incomplete.")
+        }
+        try dbQueue.write { db in
+            guard try Self.transcriptRevision(db: db, meetingID: meetingID) == expectedTranscriptRevision else { throw StorageError.transcriptChanged }
+            try db.execute(sql: """
+                INSERT INTO summaries(meeting_id, concise_text, detailed_text, bullet_text, source_transcript_revision, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                ON CONFLICT(meeting_id) DO UPDATE SET concise_text=excluded.concise_text, detailed_text=excluded.detailed_text,
+                    bullet_text=excluded.bullet_text, source_transcript_revision=excluded.source_transcript_revision, updated_at=CURRENT_TIMESTAMP
+                """, arguments: [meetingID, outputs.summary.concise, outputs.summary.detailed, outputs.summary.bullets, expectedTranscriptRevision])
+            // A new English source invalidates translations from its previous revision.
+            try db.execute(sql: "DELETE FROM generated_outputs WHERE meeting_id = ?", arguments: [meetingID])
+            for output in outputs.outputs { try Self.saveOutput(db: db, meetingID: meetingID, output: output) }
+            if let jobID { try Self.completeOutputJob(db: db, jobID: jobID, meetingID: meetingID, type: .summarisation) }
+        }
+    }
+
+    func saveTranslatedOutputs(meetingID: String, sourceOutputs: [GeneratedOutput], outputs: [GeneratedOutput], expectedTranscriptRevision: Int, jobID: String? = nil) throws {
+        guard !sourceOutputs.isEmpty, sourceOutputs.allSatisfy({ $0.language == .english }),
+              Set(sourceOutputs.map(\.type)).count == sourceOutputs.count,
+              outputs.count == sourceOutputs.count,
+              Set(outputs.map(\.type)) == Set(sourceOutputs.map(\.type)),
+              outputs.allSatisfy({ $0.language == .nepali && !$0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
+            throw LocalModelError.invalidOutput("Translation is incomplete.")
+        }
+        try dbQueue.write { db in
+            guard try Self.transcriptRevision(db: db, meetingID: meetingID) == expectedTranscriptRevision else { throw StorageError.transcriptChanged }
+            let rows = try Row.fetchAll(db, sql: "SELECT output_type, content FROM generated_outputs WHERE meeting_id = ? AND language_code = 'en'", arguments: [meetingID])
+            let saved = Dictionary(uniqueKeysWithValues: rows.map { row -> (String, String) in (row["output_type"], row["content"]) })
+            guard saved == Dictionary(uniqueKeysWithValues: sourceOutputs.map { ($0.type.rawValue, $0.content) }) else {
+                throw StorageError.generatedContentChanged
+            }
+            for output in outputs { try Self.saveOutput(db: db, meetingID: meetingID, output: output) }
+            if let jobID { try Self.completeOutputJob(db: db, jobID: jobID, meetingID: meetingID, type: .translation) }
+        }
+    }
+
+    private static func completeOutputJob(db: Database, jobID: String, meetingID: String, type: JobType) throws {
+        try db.execute(sql: "UPDATE jobs SET status='completed', progress=1, error_message=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=? AND meeting_id=? AND job_type=? AND status='running'", arguments: [jobID, meetingID, type.rawValue])
+        guard db.changesCount == 1 else { throw StorageError.generatedContentChanged }
+    }
+
+    private static func saveOutput(db: Database, meetingID: String, output: GeneratedOutput) throws {
+        try db.execute(sql: """
+            INSERT INTO generated_outputs(meeting_id, output_type, content, language_code, created_at)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(meeting_id, output_type, language_code) DO UPDATE SET content=excluded.content, created_at=CURRENT_TIMESTAMP
+            """, arguments: [meetingID, output.type.rawValue, output.content, output.language.rawValue])
+    }
+
+    func saveTranscriptionResult(meetingID: String, jobID: String, segments: [NewTranscriptSegment], checkpointBlob: String,
+        expectedTranscriptRevision: Int, expectedSourceMediaIDs: [String], processedDurationSeconds: Double) throws {
+        guard processedDurationSeconds.isFinite, processedDurationSeconds > 0, processedDurationSeconds <= 14_400 else {
+            throw StorageError.invalidTranscriptTiming
+        }
+        try dbQueue.write { db in
+            guard try Self.transcriptRevision(db: db, meetingID: meetingID) == expectedTranscriptRevision else { throw StorageError.transcriptChanged }
+            guard try String.fetchOne(db, sql: "SELECT meeting_id FROM jobs WHERE id=? AND job_type='transcription' AND status='running'", arguments: [jobID]) == meetingID else {
+                throw StorageError.meetingNotFound(meetingID: meetingID)
+            }
+            let currentMediaIDs = try String.fetchAll(db, sql: "SELECT id FROM audio_files WHERE meeting_id=? ORDER BY id", arguments: [meetingID])
+            guard currentMediaIDs == expectedSourceMediaIDs else { throw StorageError.sourceMediaChanged }
+            // Successful VAD silence preserves earlier content rather than clearing it.
+            if !segments.isEmpty { try Self.replaceTranscriptSegments(db: db, meetingID: meetingID, segments: segments) }
+            try db.execute(sql: """
+                INSERT INTO processing_state(job_id, stage, checkpoint_blob, checkpoint_offset_seconds, updated_at)
+                VALUES (?, 'transcription', ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(job_id, stage) DO UPDATE SET checkpoint_blob=excluded.checkpoint_blob,
+                    checkpoint_offset_seconds=excluded.checkpoint_offset_seconds, updated_at=CURRENT_TIMESTAMP
+                """, arguments: [jobID, checkpointBlob, processedDurationSeconds])
+            try db.execute(sql: "UPDATE jobs SET status='completed', progress=1, error_message=?, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+                arguments: [segments.isEmpty ? "No speech detected. Original audio and prior content preserved." : nil, jobID])
+        }
+    }
+
+    func searchTranscript(query: String) throws -> [TranscriptSearchResult] {
+        let words = query.trimmingCharacters(in: .whitespacesAndNewlines).split(whereSeparator: \.isWhitespace)
+        guard !words.isEmpty, words.count <= 20, query.count <= 256 else { return [] }
+        let match = words.map { "\"" + $0.replacingOccurrences(of: "\"", with: "\"\"") + "\"" }.joined(separator: " AND ")
+        return try dbQueue.read { db in
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT f.rowid AS result_id, f.meeting_id, f.meeting_title, f.segment_text,
+                    COALESCE(s.start_seconds, 0) AS start_seconds
+                FROM search_fts f LEFT JOIN transcript_segments s
+                    ON f.record_type='segment' AND s.id=CAST(f.record_id AS INTEGER)
+                WHERE search_fts MATCH ? ORDER BY bm25(search_fts), f.rowid LIMIT 100
+                """, arguments: [match])
+            return rows.map { row in
+                TranscriptSearchResult(id: row["result_id"], meetingID: row["meeting_id"],
+                    title: row["meeting_title"], text: row["segment_text"], startSeconds: row["start_seconds"])
+            }
+        }
+    }
+
+    func recoverInterruptedGenerationJobs() throws {
+        try dbQueue.write { db in
+            try db.execute(sql: """
+                UPDATE jobs SET status='paused', error_message='Interrupted by app exit. Generate again; previously saved content remains.',
+                    updated_at=CURRENT_TIMESTAMP
+                WHERE status IN ('queued', 'running') AND job_type IN ('summarisation', 'translation')
+                """)
+        }
+    }
+
+    func reserveCalendarCandidate(meetingID: String, key: String) throws -> Bool {
+        guard !key.isEmpty, key.utf8.count <= 8_192 else { throw LocalModelError.invalidOutput("Calendar candidate key is invalid.") }
+        return try dbQueue.write { db in
+            let revision = try Self.transcriptRevision(db: db, meetingID: meetingID)
+            guard try Int.fetchOne(db, sql: "SELECT source_transcript_revision FROM summaries WHERE meeting_id=?", arguments: [meetingID]) == revision else {
+                throw StorageError.transcriptChanged
+            }
+            guard let content = try String.fetchOne(db, sql: "SELECT content FROM generated_outputs WHERE meeting_id=? AND output_type='calendar_candidates' AND language_code='en'", arguments: [meetingID]),
+                  let candidates = try? JSONDecoder().decode([CalendarCandidate].self, from: Data(content.utf8)),
+                  candidates.contains(where: { $0.id == key }) else { throw StorageError.generatedContentChanged }
+            try db.execute(sql: """
+                INSERT INTO calendar_links(meeting_id, event_identifier, candidate_key, status, created_at)
+                VALUES (?, ?, ?, 'pending', CURRENT_TIMESTAMP)
+                ON CONFLICT(meeting_id, candidate_key) DO NOTHING
+                """, arguments: [meetingID, "pending-" + UUID().uuidString.lowercased(), key])
+            return db.changesCount == 1
+        }
+    }
+
+    func completeCalendarCandidate(meetingID: String, key: String, eventIdentifier: String) throws {
+        guard !eventIdentifier.isEmpty else { throw LocalModelError.invalidOutput("Calendar event identifier is missing.") }
+        try dbQueue.write { db in
+            try db.execute(sql: "UPDATE calendar_links SET event_identifier=?, status='completed' WHERE meeting_id=? AND candidate_key=? AND status='pending'", arguments: [eventIdentifier, meetingID, key])
+            guard db.changesCount == 1 else { throw StorageError.generatedContentChanged }
+        }
+    }
+
+    func releaseCalendarReservation(meetingID: String, key: String) throws {
+        try dbQueue.write { db in
+            try db.execute(sql: "DELETE FROM calendar_links WHERE meeting_id=? AND candidate_key=? AND status='pending'", arguments: [meetingID, key])
+        }
+    }
+
     func summary(meetingID: String) throws -> SummaryContent? {
         try dbQueue.read { db in
             guard let row = try Row.fetchOne(
@@ -428,6 +626,15 @@ actor StorageService {
                 detailed: row["detailed_text"] ?? "",
                 bullets: row["bullet_text"] ?? ""
             )
+        }
+    }
+
+    func summaryIsCurrent(meetingID: String) throws -> Bool {
+        try dbQueue.read { db in
+            try Bool.fetchOne(db, sql: """
+                SELECT s.source_transcript_revision = m.transcript_revision
+                FROM summaries s JOIN meetings m ON m.id = s.meeting_id WHERE m.id = ?
+                """, arguments: [meetingID]) ?? false
         }
     }
 
@@ -745,13 +952,9 @@ actor StorageService {
         let importsDirectory = appSupportDirectoryURL.appendingPathComponent("Imports", isDirectory: true)
         let meetingDirectory = importsDirectory.appendingPathComponent(meetingID, isDirectory: true)
         let sanitizedFilename = sourceURL.lastPathComponent.replacingOccurrences(of: "/", with: "-")
-        let destinationURL = meetingDirectory.appendingPathComponent(sanitizedFilename)
+        let destinationURL = meetingDirectory.appendingPathComponent("\(UUID().uuidString.lowercased())-\(sanitizedFilename)")
 
         try FileManager.default.createDirectory(at: meetingDirectory, withIntermediateDirectories: true)
-
-        if FileManager.default.fileExists(atPath: destinationURL.path) {
-            try FileManager.default.removeItem(at: destinationURL)
-        }
 
         try FileManager.default.copyItem(at: sourceURL, to: destinationURL)
 
@@ -760,8 +963,14 @@ actor StorageService {
     }
 
     func deleteMeetingAndFiles(meetingID: String, fileManager: FileManager = .default) throws {
+        guard !meetingID.isEmpty, meetingID != ".", meetingID != "..", !meetingID.contains("/") else {
+            throw StorageError.unsafeMediaPath
+        }
         let relativePaths: [String] = try dbQueue.read { db in
-            try String.fetchAll(
+            guard try Bool.fetchOne(db, sql: "SELECT EXISTS(SELECT 1 FROM meetings WHERE id = ?)", arguments: [meetingID]) == true else {
+                throw StorageError.meetingNotFound(meetingID: meetingID)
+            }
+            return try String.fetchAll(
                 db,
                 sql: """
                 SELECT relative_path
@@ -772,48 +981,49 @@ actor StorageService {
             )
         }
 
-        let fileURLs = relativePaths.map { appSupportDirectoryURL.appendingPathComponent($0) }
         let directories = [
             appSupportDirectoryURL.appendingPathComponent("Recordings", isDirectory: true)
                 .appendingPathComponent(meetingID, isDirectory: true),
             appSupportDirectoryURL.appendingPathComponent("Imports", isDirectory: true)
                 .appendingPathComponent(meetingID, isDirectory: true),
         ]
-
-        for fileURL in fileURLs {
-            guard fileManager.fileExists(atPath: fileURL.path) else {
-                continue
-            }
-
-            do {
-                try fileManager.removeItem(at: fileURL)
-            } catch {
-                throw StorageError.fileDeletionFailed(path: fileURL.path, reason: error.localizedDescription)
+        for relativePath in relativePaths {
+            let resolved = appSupportDirectoryURL.appendingPathComponent(relativePath).resolvingSymlinksInPath().standardizedFileURL
+            guard directories.contains(where: {
+                resolved.path.hasPrefix($0.resolvingSymlinksInPath().standardizedFileURL.path + "/")
+            }) else {
+                throw StorageError.unsafeMediaPath
             }
         }
-
-        for directoryURL in directories {
-            guard fileManager.fileExists(atPath: directoryURL.path) else {
-                continue
+        let trashDirectory = appSupportDirectoryURL.appendingPathComponent("_trash", isDirectory: true)
+            .appendingPathComponent(meetingID, isDirectory: true)
+            .appendingPathComponent(UUID().uuidString.lowercased(), isDirectory: true)
+        var archived: [(original: URL, destination: URL)] = []
+        do {
+            try dbQueue.write { db in
+                for directory in directories where fileManager.fileExists(atPath: directory.path) {
+                    let destination = trashDirectory.appendingPathComponent(directory.deletingLastPathComponent().lastPathComponent, isDirectory: true)
+                    try fileManager.createDirectory(at: trashDirectory, withIntermediateDirectories: true)
+                    try fileManager.moveItem(at: directory, to: destination)
+                    archived.append((directory, destination))
+                }
+                try db.execute(sql: "DELETE FROM meetings WHERE id = ?", arguments: [meetingID])
+                if db.changesCount == 0 {
+                    throw StorageError.meetingNotFound(meetingID: meetingID)
+                }
             }
-
-            do {
-                try fileManager.removeItem(at: directoryURL)
-            } catch {
-                throw StorageError.folderDeletionFailed(path: directoryURL.path, reason: error.localizedDescription)
+        } catch {
+            for item in archived.reversed() {
+                do {
+                    try fileManager.moveItem(at: item.destination, to: item.original)
+                } catch {
+                    throw StorageError.folderDeletionFailed(
+                        path: item.destination.path,
+                        reason: "Audio remains archived here; restoring its original location failed: \(error.localizedDescription)"
+                    )
+                }
             }
-        }
-
-        try dbQueue.write { db in
-            let changesBeforeDelete = db.changesCount
-            try db.execute(
-                sql: "DELETE FROM meetings WHERE id = ?",
-                arguments: [meetingID]
-            )
-            let changesAfterDelete = db.changesCount
-            if changesAfterDelete == changesBeforeDelete {
-                throw StorageError.meetingNotFound(meetingID: meetingID)
-            }
+            throw error
         }
     }
 
@@ -864,12 +1074,24 @@ extension StorageService.StorageError: LocalizedError {
         switch self {
         case .transcriptSegmentLocked(let segmentID):
             return "Segment \(segmentID) is locked and cannot be edited."
+        case .transcriptContainsReviewedSegments:
+            return "This transcript contains corrections or locked segments. Regeneration is blocked to preserve your review."
+        case .invalidTranscriptTiming:
+            return "Transcript timestamps must be finite, non-negative, and ordered."
         case .meetingNotFound(let meetingID):
             return "Meeting \(meetingID) was not found."
         case .fileDeletionFailed(let path, let reason):
             return "Failed to delete file at \(path): \(reason)"
         case .folderDeletionFailed(let path, let reason):
             return "Failed to delete folder at \(path): \(reason)"
+        case .unsafeMediaPath:
+            return "Meeting audio path is outside its storage folder. No files were changed."
+        case .transcriptChanged:
+            return "Transcript changed during processing. Previous content remains; generate again from the latest review."
+        case .generatedContentChanged:
+            return "Meeting outputs changed during processing. Review the latest content and retry."
+        case .sourceMediaChanged:
+            return "Meeting audio changed during processing. Original audio and prior content remain preserved; start a new transcription."
         }
     }
 }

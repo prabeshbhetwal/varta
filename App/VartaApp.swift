@@ -10,6 +10,11 @@ struct VartaApp: App {
                 .environmentObject(appModel)
                 .disableSystemWritingTools()
         }
+        Settings {
+            SettingsShellView()
+                .environmentObject(appModel)
+                .disableSystemWritingTools()
+        }
     }
 }
 

@@ -1,0 +1,7 @@
+// Generate the optional include with prepare-whisper.py before opening/building Xcode.
+// Missing artifacts retain the explicit unavailable-engine path.
+FRAMEWORK_SEARCH_PATHS = $(inherited)
+OTHER_LDFLAGS = $(inherited)
+VARTA_WHISPER_INPUT_FILE_LIST = $(SRCROOT)/Native/whisper-inputs.xcfilelist
+VARTA_WHISPER_OUTPUT_FILE_LIST = $(SRCROOT)/Native/whisper-inputs.xcfilelist
+#include? "../.audit/native/whisper.generated.xcconfig"

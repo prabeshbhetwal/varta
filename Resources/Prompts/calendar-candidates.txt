@@ -1,2 +1,4 @@
 Suggest follow-up meeting candidates from transcript commitments.
 Include title, proposed date hint, duration hint, and reason.
+Return only a JSON array of objects with "title", "date_hint", "duration_minutes", "reason" and "source_quote".
+Use null for unknown duration. Do not invent dates or commitments; return [] when no candidate is supported.

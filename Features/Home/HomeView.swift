@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 private func formatted(seconds: Double) -> String {
     let total = max(Int(seconds), 0)
@@ -18,17 +19,19 @@ struct HomeView: View {
 
     var body: some View {
         Group {
-            if let storage = appModel.storageService, let recorderCoordinator = appModel.recorderCoordinator {
+            if let storage = appModel.storageService, let recorderCoordinator = appModel.recorderCoordinator,
+               let memoryManager = appModel.memoryManager {
                 let viewModel = viewModelHolder.viewModel(storageService: storage)
                 let recordingVM = recordingVMHolder.viewModel(
                     recorderCoordinator: recorderCoordinator,
+                    settingsStore: appModel.settingsStore,
                     onRecordingSaved: { meetingID in
                         Task {
                             await viewModel.refreshMeetings(select: meetingID)
                         }
                     }
                 )
-                HomeContentView(storageService: storage, viewModel: viewModel, recordingVM: recordingVM)
+                HomeContentView(storageService: storage, memoryManager: memoryManager, viewModel: viewModel, recordingVM: recordingVM)
             } else {
                 ProgressView("Preparing storage")
             }
@@ -38,39 +41,76 @@ struct HomeView: View {
 
 private struct HomeContentView: View {
     let storageService: StorageService
+    let memoryManager: MemoryManager
     @ObservedObject var viewModel: HomeViewModel
     @ObservedObject var recordingVM: RecordingControlsViewModel
+    @State private var showsImporter = false
 
     var body: some View {
         NavigationSplitView {
-            List(viewModel.meetings, selection: selectedMeetingBinding) { meeting in
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(meeting.title)
-                        .font(.headline)
-                    Text(meeting.createdAt, style: .date)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+            List(selection: selectedMeetingBinding) {
+                if !viewModel.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    ForEach(viewModel.searchResults) { result in
+                        Button { viewModel.selectSearchResult(result) } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(result.title).font(.headline)
+                                Text(result.text).font(.caption).lineLimit(3)
+                                Text(formatted(seconds: result.startSeconds)).font(.caption.monospaced())
+                            }.frame(maxWidth: .infinity, alignment: .leading)
+                        }.buttonStyle(.plain)
+                    }
+                } else {
+                    ForEach(viewModel.meetings) { meeting in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(meeting.title).font(.headline)
+                            Text(meeting.createdAt, style: .date).font(.caption).foregroundStyle(.secondary)
+                        }.tag(Optional(meeting.id))
+                    }
                 }
-                .tag(Optional(meeting.id))
+                if !viewModel.recoverableRecordingJobs.isEmpty {
+                    Section("Interrupted Recordings") {
+                        ForEach(viewModel.recoverableRecordingJobs) { job in
+                            Button {
+                                Task {
+                                    await recordingVM.restoreInterruptedRecording(jobID: job.id, storageService: storageService)
+                                    if let meetingID = job.meetingID { viewModel.selectedMeetingID = meetingID }
+                                }
+                            } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Recover recording")
+                                    Text(viewModel.meetings.first { $0.id == job.meetingID }?.title ?? "Interrupted meeting")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                            }.disabled(recordingVM.snapshot.state != .idle && recordingVM.snapshot.state != .failed && recordingVM.snapshot.state != .completed)
+                        }
+                    }
+                }
             }
             .overlay {
-                if viewModel.meetings.isEmpty {
+                if !viewModel.searchQuery.isEmpty && viewModel.searchResults.isEmpty {
+                    ContentUnavailableView("No Transcript Matches", systemImage: "magnifyingglass", description: Text("Search generated transcripts, including saved corrections."))
+                } else if viewModel.meetings.isEmpty {
                     ContentUnavailableView {
                         Label("No Recordings Yet", systemImage: "waveform.badge.plus")
                     } description: {
                         Text("Start a recording to create your first transcript source.")
                     } actions: {
                         Button("Record") {
-                            recordingVM.startMicrophoneRecording()
+                            recordingVM.startRecording()
                         }
-                        .keyboardShortcut("r", modifiers: [])
+                        .keyboardShortcut("r", modifiers: .command)
                     }
                 }
             }
+            .searchable(text: $viewModel.searchQuery, prompt: "Search transcripts")
+            .task(id: viewModel.searchQuery) { await viewModel.searchTranscripts() }
             .navigationTitle("Recordings")
         } detail: {
             if let meetingID = viewModel.selectedMeetingID {
-                MeetingDetailView(meetingID: meetingID, storageService: storageService)
+                MeetingDetailView(meetingID: meetingID, storageService: storageService, memoryManager: memoryManager,
+                                  contentRevision: viewModel.meetingContentRevisions[meetingID, default: 0],
+                                  requestedSegmentID: viewModel.selectedSearchResult?.meetingID == meetingID ? viewModel.selectedSearchResult?.id : nil,
+                                  requestedSeekSeconds: viewModel.selectedSearchResult?.meetingID == meetingID ? viewModel.selectedSearchResult?.startSeconds : nil)
                     .id(meetingID)
             } else {
                 ContentUnavailableView("Select a Recording", systemImage: "list.bullet.rectangle")
@@ -79,6 +119,31 @@ private struct HomeContentView: View {
         .navigationSplitViewColumnWidth(min: 260, ideal: 320)
         .toolbar {
             RecordingToolbarControls(viewModel: recordingVM)
+            ToolbarItem {
+                Button {
+                    showsImporter = true
+                } label: {
+                    Label("Import", systemImage: "square.and.arrow.down")
+                }
+                .disabled(viewModel.isImporting)
+                .keyboardShortcut("i", modifiers: .command)
+            }
+        }
+        .fileImporter(isPresented: $showsImporter, allowedContentTypes: [.audio, .movie]) { result in
+            switch result {
+            case .success(let url):
+                Task { await viewModel.importMediaFile(at: url) }
+            case .failure(let error):
+                viewModel.errorMessage = error.localizedDescription
+            }
+        }
+        .alert("Varta", isPresented: Binding(
+            get: { viewModel.errorMessage != nil || recordingVM.errorMessage != nil },
+            set: { _ in viewModel.errorMessage = nil; recordingVM.errorMessage = nil }
+        )) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(viewModel.errorMessage ?? recordingVM.errorMessage ?? "Unknown error")
         }
         .safeAreaInset(edge: .bottom) {
             RecordingStatusFooter(viewModel: recordingVM)
@@ -109,6 +174,7 @@ private struct HomeContentView: View {
                     return
                 }
                 viewModel.selectedMeetingID = newMeetingID
+                viewModel.selectedSearchResult = nil
             }
         )
     }
@@ -121,23 +187,24 @@ private struct RecordingToolbarControls: ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
             switch viewModel.snapshot.state {
             case .idle, .failed, .completed:
+                Menu {
+                    Toggle("Microphone", isOn: $viewModel.captureMicrophone)
+                    Toggle("System Audio", isOn: $viewModel.captureSystemAudio)
+                } label: {
+                    Label("Audio Sources", systemImage: "slider.horizontal.3")
+                }
                 Button {
-                    viewModel.startMicrophoneRecording()
+                    viewModel.startRecording()
                 } label: {
                     Label("Record", systemImage: "record.circle")
                 }
                 .help("Start recording")
+                .disabled(!viewModel.captureMicrophone && !viewModel.captureSystemAudio)
             case .starting:
                 ProgressView()
                     .controlSize(.small)
                     .help("Starting recording")
 
-                Button {
-                    viewModel.stopRecording()
-                } label: {
-                    Label("Stop", systemImage: "stop.fill")
-                }
-                .help("Stop recording")
             case .recording:
                 Text(formatted(seconds: viewModel.snapshot.totalRecordedSeconds))
                     .monospacedDigit()
@@ -157,6 +224,12 @@ private struct RecordingToolbarControls: ToolbarContent {
                 }
                 .help("Stop recording")
             case .paused:
+                Menu {
+                    Toggle("Microphone", isOn: $viewModel.captureMicrophone)
+                    Toggle("System Audio", isOn: $viewModel.captureSystemAudio)
+                } label: {
+                    Label("Audio Sources", systemImage: "slider.horizontal.3")
+                }
                 Text(formatted(seconds: viewModel.snapshot.totalRecordedSeconds))
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
@@ -167,6 +240,7 @@ private struct RecordingToolbarControls: ToolbarContent {
                     Label("Resume", systemImage: "play.fill")
                 }
                 .help("Resume recording")
+                .disabled(!viewModel.captureMicrophone && !viewModel.captureSystemAudio)
 
                 Button {
                     viewModel.stopRecording()
@@ -214,12 +288,13 @@ private struct RecordingStatusFooter: View {
                         Button("Resume") {
                             viewModel.resumeRecording()
                         }
+                        .disabled(!viewModel.captureMicrophone && !viewModel.captureSystemAudio)
                     }
 
                     Button("Stop", role: .destructive) {
                         viewModel.stopRecording()
                     }
-                    .disabled(viewModel.snapshot.state == .stopping)
+                    .disabled(viewModel.snapshot.state == .stopping || viewModel.snapshot.state == .starting)
                 }
                 .foregroundStyle(.primary)
             } else if let userMessage = viewModel.userMessage, !userMessage.isEmpty {
@@ -304,12 +379,12 @@ final class RecordingToolbarViewModelHolder: ObservableObject {
     private var cachedCoordinatorID: ObjectIdentifier?
     private var cachedViewModel: RecordingControlsViewModel?
 
-    func viewModel(recorderCoordinator: RecorderCoordinator, onRecordingSaved: @escaping (String?) -> Void) -> RecordingControlsViewModel {
+    func viewModel(recorderCoordinator: RecorderCoordinator, settingsStore: SettingsStore?, onRecordingSaved: @escaping (String?) -> Void) -> RecordingControlsViewModel {
         let identifier = ObjectIdentifier(recorderCoordinator)
         if let cachedViewModel, cachedCoordinatorID == identifier {
             return cachedViewModel
         }
-        let created = RecordingControlsViewModel(recorderCoordinator: recorderCoordinator, onRecordingSaved: onRecordingSaved)
+        let created = RecordingControlsViewModel(recorderCoordinator: recorderCoordinator, settingsStore: settingsStore, onRecordingSaved: onRecordingSaved)
         created.captureMicrophone = true
         created.captureSystemAudio = false
         cachedCoordinatorID = identifier

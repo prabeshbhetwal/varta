@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import Foundation
 import UniformTypeIdentifiers
 
@@ -13,18 +14,33 @@ final class MeetingDetailViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var successMessage: String?
     @Published private(set) var meetingTitle: String = ""
+    @Published private(set) var summary: SummaryContent?
+    @Published private(set) var isSummaryCurrent = false
+    @Published private(set) var outputs: [GeneratedOutput] = []
+    @Published private(set) var resumableJobs: [JobRecord] = []
+    @Published private(set) var isGeneratingOutputs = false
+    @Published private(set) var isTranslating = false
+    @Published private(set) var isPreparingPlayback = false
+    @Published var languageMode: LanguageMode = .mixed
+    @Published var translationLanguage: LanguageMode = .nepali
+    @Published private(set) var player: AVPlayer?
 
     let meetingID: String
 
     private let storageService: StorageService
-    private let transcriptionService: TranscriptionService
+    private let memoryManager: MemoryManager
+    private var processingTask: Task<Void, Never>?
+    private var playbackMediaIDs: [String] = []
+    private var pendingSeekSeconds: Double?
+    private var playbackPreparationRevision = 0
+    private var isPlaybackActive = true
 
-    init(meetingID: String, storageService: StorageService) {
+    var isProcessing: Bool { isGeneratingTranscript || isGeneratingOutputs || isTranslating }
+
+    init(meetingID: String, storageService: StorageService, memoryManager: MemoryManager) {
         self.meetingID = meetingID
         self.storageService = storageService
-
-        let memoryManager = MemoryManager()
-        self.transcriptionService = TranscriptionService(storageService: storageService, memoryManager: memoryManager)
+        self.memoryManager = memoryManager
     }
 
     func refresh() async {
@@ -33,9 +49,17 @@ final class MeetingDetailViewModel: ObservableObject {
         do {
             segments = try await storageService.transcriptSegments(meetingID: meetingID)
             importedMedia = try await storageService.importedMedia(for: meetingID)
+            summary = try await storageService.summary(meetingID: meetingID)
+            isSummaryCurrent = try await storageService.summaryIsCurrent(meetingID: meetingID)
+            outputs = try await storageService.generatedOutputs(meetingID: meetingID)
+            resumableJobs = try await storageService.jobs(statuses: [.paused, .failed], type: .transcription)
+                .filter { $0.meetingID == meetingID }
             meetingTitle = (try? await storageService.meetingTitle(meetingID: meetingID)) ?? ""
             appSupportDirectoryURL = await storageService.appSupportDirectory()
             recordingsFolderURL = await storageService.recordingsDirectory(meetingID: meetingID)
+            if let first = importedMedia.first, let root = appSupportDirectoryURL {
+                recordingsFolderURL = root.appendingPathComponent(first.relativePath).deletingLastPathComponent()
+            }
         } catch {
             segments = []
             importedMedia = []
@@ -46,10 +70,22 @@ final class MeetingDetailViewModel: ObservableObject {
         isLoadingContent = false
     }
 
-    func generateTranscript(preferredMediaID: String? = nil) async {
-        guard !isGeneratingTranscript else {
-            return
+    func startTranscript(resumeJobID: String? = nil) {
+        guard !isProcessing else { return }
+        isGeneratingTranscript = true
+        processingTask = Task { await generateTranscript(resumeJobID: resumeJobID) }
+    }
+
+    func refreshMedia() async {
+        do {
+            importedMedia = try await storageService.importedMedia(for: meetingID)
+            if player != nil || isPreparingPlayback { await preparePlayback() }
+        } catch {
+            errorMessage = "Recording refresh failed: \(error.localizedDescription)"
         }
+    }
+
+    private func generateTranscript(resumeJobID: String?) async {
 
         isGeneratingTranscript = true
         errorMessage = nil
@@ -57,6 +93,12 @@ final class MeetingDetailViewModel: ObservableObject {
         defer { isGeneratingTranscript = false }
 
         do {
+            if let resumeJobID,
+               let checkpoint = try await storageService.processingState(jobID: resumeJobID, stage: "transcription"),
+               let blob = checkpoint.checkpointBlob {
+                struct SavedLanguage: Decodable { let languageMode: LanguageMode }
+                languageMode = try JSONDecoder().decode(SavedLanguage.self, from: Data(blob.utf8)).languageMode
+            }
             let media = try await storageService.importedMedia(for: meetingID)
             guard !media.isEmpty else {
                 throw NSError(
@@ -66,26 +108,150 @@ final class MeetingDetailViewModel: ObservableObject {
                 )
             }
 
-            let mediaToTranscribe = mediaForTranscription(from: media, preferredMediaID: preferredMediaID)
-            let mediaURL = await storageService.resolvedImportedMediaURL(relativePath: mediaToTranscribe.relativePath)
-            guard FileManager.default.fileExists(atPath: mediaURL.path) else {
-                throw NSError(
-                    domain: "Varta.Transcript",
-                    code: 4002,
-                    userInfo: [NSLocalizedDescriptionKey: "Recording file is missing: \(mediaURL.lastPathComponent)"]
-                )
-            }
-
+            let configuration = await localModelConfiguration()
+            let transcriptionService = TranscriptionService(
+                storageService: storageService,
+                memoryManager: memoryManager,
+                whisperClient: WhisperCppBridge(configuration: WhisperCppConfiguration(models: configuration)),
+                voiceActivityDetector: WhisperVoiceActivityDetector(configuration: configuration)
+            )
             _ = try await transcriptionService.transcribeMeeting(
                 meetingID: meetingID,
-                mediaURL: mediaURL,
-                languageMode: .mixed
+                languageMode: languageMode,
+                resumeJobID: resumeJobID
             )
             await refresh()
-            successMessage = "Transcript generated."
+            successMessage = await transcriptionService.lastCompletionHadNoSpeech
+                ? "No speech detected. Audio and previous meeting content remain saved."
+                : "Transcript generated."
+        } catch is CancellationError {
+            await refresh()
+            successMessage = "Transcription paused. Completed windows remain saved."
         } catch {
-            errorMessage = "Transcript generation failed: \(error.localizedDescription)"
+            let message = "Transcript generation failed: \(error.localizedDescription)"
+            await refresh()
+            errorMessage = message
         }
+    }
+
+    func startSummary() {
+        guard !isProcessing else { return }
+        isGeneratingOutputs = true
+        processingTask = Task {
+            isGeneratingOutputs = true
+            errorMessage = nil
+            successMessage = nil
+            defer { isGeneratingOutputs = false }
+            do {
+                let client = MLXLanguageModelClient(configuration: await localModelConfiguration())
+                let service = SummariserService(storageService: storageService, memoryManager: memoryManager, client: client)
+                _ = try await service.summariseMeeting(meetingID: meetingID)
+                await refresh()
+                successMessage = "Summary and outputs generated. Review before using them."
+            } catch is CancellationError {
+                await refresh()
+                successMessage = "Generation cancelled. Existing outputs preserved."
+            } catch {
+                let message = error.localizedDescription
+                await refresh()
+                errorMessage = message
+            }
+        }
+    }
+
+    func startTranslation() {
+        guard !isProcessing else { return }
+        isTranslating = true
+        processingTask = Task {
+            isTranslating = true
+            errorMessage = nil
+            successMessage = nil
+            defer { isTranslating = false }
+            do {
+                let client = MLXLanguageModelClient(configuration: await localModelConfiguration())
+                let service = TranslationService(storageService: storageService, memoryManager: memoryManager, client: client)
+                _ = try await service.translateOutputs(meetingID: meetingID, targetLanguage: translationLanguage)
+                await refresh()
+                successMessage = "Translation ready for review."
+            } catch is CancellationError {
+                successMessage = "Translation cancelled. Existing outputs preserved."
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func cancelProcessing() { processingTask?.cancel() }
+
+    func preparePlayback() async {
+        guard isPlaybackActive else { return }
+        let media = importedMedia
+        let mediaIDs = media.map(\.id)
+        if player != nil && playbackMediaIDs == mediaIDs { return }
+        playbackPreparationRevision += 1
+        let preparationRevision = playbackPreparationRevision
+        isPreparingPlayback = true
+        defer { if preparationRevision == playbackPreparationRevision { isPreparingPlayback = false } }
+        do {
+            let root = await storageService.appSupportDirectory()
+            let item = try await MediaProcessingService.playbackItem(media: media, rootDirectory: root)
+            try Task.checkCancellation()
+            guard isPlaybackActive, preparationRevision == playbackPreparationRevision, mediaIDs == importedMedia.map(\.id) else { return }
+            let previousTime = player?.currentTime()
+            let wasPlaying = (player?.rate ?? 0) > 0
+            if let player { player.replaceCurrentItem(with: item) }
+            else { player = AVPlayer(playerItem: item) }
+            playbackMediaIDs = mediaIDs
+            if wasPlaying { player?.play() }
+            if let previousTime, previousTime.seconds.isFinite, previousTime.seconds > 0 {
+                _ = await player?.seek(to: previousTime)
+            }
+        } catch is CancellationError {
+        } catch {
+            guard preparationRevision == playbackPreparationRevision else { return }
+            errorMessage = "Playback unavailable: \(error.localizedDescription)"
+        }
+    }
+
+    func seek(to seconds: Double) async {
+        guard isPlaybackActive, seconds.isFinite && seconds >= 0 else { return }
+        pendingSeekSeconds = seconds
+        await preparePlayback()
+        guard isPlaybackActive, let requestedSeconds = pendingSeekSeconds, let player else { return }
+        let requestRevision = playbackPreparationRevision
+        _ = await player.seek(to: CMTime(seconds: requestedSeconds, preferredTimescale: 600))
+        guard isPlaybackActive, requestRevision == playbackPreparationRevision,
+              pendingSeekSeconds == requestedSeconds, self.player === player else { return }
+        player.play()
+    }
+
+    func activatePlayback() { isPlaybackActive = true }
+
+    func stopPlayback() {
+        isPlaybackActive = false
+        playbackPreparationRevision += 1
+        pendingSeekSeconds = nil
+        isPreparingPlayback = false
+        player?.pause()
+    }
+
+    func output(_ type: GeneratedOutputType, language: LanguageMode = .english) -> String? {
+        outputs.first { $0.type == type && $0.language == language }?.content
+    }
+
+    func calendarCandidates() throws -> [CalendarCandidate] {
+        guard let content = output(.calendarCandidates) else { return [] }
+        let candidates = try JSONDecoder().decode([CalendarCandidate].self, from: Data(content.utf8))
+        for candidate in candidates { try candidate.validate() }
+        return candidates
+    }
+
+    private func localModelConfiguration() async -> LocalModelConfiguration {
+        let defaults = UserDefaults.standard
+        let whisper = defaults.string(forKey: "varta.whisperModelPath").flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
+        let languageModel = defaults.string(forKey: "varta.languageModelPath").flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true) }
+        let vad = defaults.string(forKey: "varta.vadModelPath").flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0) }
+        return LocalModelConfiguration(rootDirectory: await storageService.appSupportDirectory(), whisperOverride: whisper, languageModelOverride: languageModel, vadOverride: vad)
     }
 
     func transcriptEmptyMessage() -> String {
@@ -184,15 +350,6 @@ final class MeetingDetailViewModel: ObservableObject {
         } catch {
             errorMessage = "Could not update lock: \(error.localizedDescription)"
         }
-    }
-
-    private func mediaForTranscription(from media: [ImportedMediaRecord], preferredMediaID: String?) -> ImportedMediaRecord {
-        if let preferredMediaID,
-           let selected = media.first(where: { $0.id == preferredMediaID }) {
-            return selected
-        }
-
-        return media.sorted(by: { ($0.durationSeconds ?? 0) > ($1.durationSeconds ?? 0) }).first ?? media[0]
     }
 
     private func timecode(_ seconds: Double) -> String {

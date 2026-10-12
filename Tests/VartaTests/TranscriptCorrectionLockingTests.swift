@@ -45,4 +45,45 @@ final class TranscriptCorrectionLockingTests: XCTestCase {
         URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
             .appendingPathComponent("varta-lock-tests-\(UUID().uuidString).sqlite")
     }
+
+    func testRegenerationPreservesReviewedSegments() async throws {
+        for locked in [false, true] {
+            let storage = try StorageService(databaseURL: temporaryDatabaseURL())
+            let meetingID = try await storage.createMeeting(title: "Reviewed transcript", languageMode: .english)
+            let raw = NewTranscriptSegment(startSeconds: 0, endSeconds: 1, text: "Raw text", languageTag: "en", speakerLabel: nil)
+            try await storage.replaceTranscriptSegments(meetingID: meetingID, segments: [raw])
+            let segments = try await storage.transcriptSegments(meetingID: meetingID)
+            let segment = try XCTUnwrap(segments.first)
+            if locked {
+                try await storage.setTranscriptSegmentLock(segmentID: segment.id, isLocked: true)
+            } else {
+                try await storage.updateTranscriptCorrection(segmentID: segment.id, correctedText: "Reviewed text")
+            }
+            do {
+                try await storage.replaceTranscriptSegments(meetingID: meetingID, segments: [])
+                XCTFail("Regeneration must preserve review")
+            } catch StorageService.StorageError.transcriptContainsReviewedSegments { }
+            let persisted = try await storage.transcriptSegments(meetingID: meetingID)
+            XCTAssertEqual(persisted.first?.id, segment.id)
+            XCTAssertEqual(persisted.first?.text, "Raw text")
+            XCTAssertEqual(persisted.first?.correctedText, locked ? nil : "Reviewed text")
+            XCTAssertEqual(persisted.first?.isLocked, locked)
+        }
+    }
+
+    func testInvalidTimestampsDoNotReplaceTranscript() async throws {
+        let storage = try StorageService(databaseURL: temporaryDatabaseURL())
+        let meetingID = try await storage.createMeeting(title: "Timing validation", languageMode: .english)
+        try await storage.replaceTranscriptSegments(meetingID: meetingID, segments: [
+            NewTranscriptSegment(startSeconds: 0, endSeconds: 1, text: "Preserved", languageTag: "en", speakerLabel: nil)
+        ])
+        do {
+            try await storage.replaceTranscriptSegments(meetingID: meetingID, segments: [
+                NewTranscriptSegment(startSeconds: .nan, endSeconds: 1, text: "Invalid", languageTag: "en", speakerLabel: nil)
+            ])
+            XCTFail("Expected timing validation")
+        } catch StorageService.StorageError.invalidTranscriptTiming { }
+        let persisted = try await storage.transcriptSegments(meetingID: meetingID)
+        XCTAssertEqual(persisted.map(\.text), ["Preserved"])
+    }
 }

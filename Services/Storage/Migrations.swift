@@ -187,6 +187,56 @@ enum VartaMigrations {
             }
         }
 
+        migrator.registerMigration("004_search_corrected_transcript") { db in
+            try db.execute(sql: "DROP TRIGGER transcript_segments_au")
+            try db.execute(sql: """
+            CREATE TRIGGER transcript_segments_au AFTER UPDATE OF text, corrected_text, meeting_id ON transcript_segments BEGIN
+                UPDATE search_fts
+                SET
+                    meeting_id = NEW.meeting_id,
+                    meeting_title = COALESCE((SELECT title FROM meetings WHERE id = NEW.meeting_id), ''),
+                    segment_text = COALESCE(NEW.corrected_text, NEW.text)
+                WHERE record_type = 'segment' AND record_id = CAST(OLD.id AS TEXT);
+            END
+            """)
+            try db.execute(sql: """
+            UPDATE search_fts
+            SET segment_text = (
+                SELECT COALESCE(corrected_text, text)
+                FROM transcript_segments
+                WHERE id = CAST(search_fts.record_id AS INTEGER)
+            )
+            WHERE record_type = 'segment'
+            """)
+        }
+
+        migrator.registerMigration("005_transcript_revision") { db in
+            try db.alter(table: "meetings") { table in
+                table.add(column: "transcript_revision", .integer).notNull().defaults(to: 0)
+            }
+            for (suffix, operation, row) in [("ai", "INSERT", "NEW"), ("au", "UPDATE", "NEW"), ("ad", "DELETE", "OLD")] {
+                try db.execute(sql: """
+                CREATE TRIGGER transcript_revision_\(suffix) AFTER \(operation) ON transcript_segments BEGIN
+                    UPDATE meetings SET transcript_revision = transcript_revision + 1, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = \(row).meeting_id;
+                END
+                """)
+            }
+        }
+
+        migrator.registerMigration("006_audio_timeline_and_calendar_receipts") { db in
+            try db.alter(table: "audio_files") { table in
+                table.add(column: "source", .text)
+                table.add(column: "segment_index", .integer)
+                table.add(column: "timeline_offset_seconds", .double)
+            }
+            try db.alter(table: "calendar_links") { table in
+                table.add(column: "candidate_key", .text)
+                table.add(column: "status", .text).notNull().defaults(to: "completed")
+            }
+            try db.execute(sql: "CREATE UNIQUE INDEX calendar_candidate_receipt ON calendar_links(meeting_id, candidate_key)")
+        }
+
         return migrator
     }
 }

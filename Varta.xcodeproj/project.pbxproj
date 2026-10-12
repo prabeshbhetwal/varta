@@ -633,7 +633,7 @@
 			inputFileListPaths = ("$(VARTA_WHISPER_INPUT_FILE_LIST)");
 			inputPaths = ("$(SRCROOT)/Native/prepare-whisper.py");
 			name = "Embed optional whisper";
-			outputPaths = ("$(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)");
+            outputPaths = ();
 			outputFileListPaths = ("$(VARTA_WHISPER_OUTPUT_FILE_LIST)");
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;

@@ -20,9 +20,9 @@ configuration before opening/building the workspace:
       --config-output "$PWD/.audit/native/whisper.generated.xcconfig"
 
 The app build includes this generated configuration, explicitly links whisper and
-embeds a dynamic framework when required. An absent placeholder does not supply a
-Preparation also generates exact input/output file lists for Xcode's script sandbox;
-keep them beside the generated configuration. Sandbox/signing settings remain intact.
+embeds a dynamic framework when required. Preparation also generates exact input/
+output file lists for Xcode's script sandbox; keep them beside the configuration.
+Sandbox/signing settings remain intact. An absent placeholder does not supply a
 native module; native transcription then reports an engine error. Source preparation
 never overwrites a divergent existing framework. Use a fresh build output directory
 when changing framework versions.

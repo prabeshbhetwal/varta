@@ -136,6 +136,7 @@
 		FR2E00000000000000000000 /* model-manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "model-manifest.json"; sourceTree = "<group>"; };
 		FR2F00000000000000000000 /* whisper-cpp.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = "whisper-cpp.xcframework"; sourceTree = "<group>"; };
 		FR2F10000000000000000000 /* native-engines.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "native-engines.xcconfig"; sourceTree = "<group>"; };
+		FR2F20000000000000000000 /* whisper-inputs.xcfilelist */ = {isa = PBXFileReference; lastKnownFileType = text; path = "whisper-inputs.xcfilelist"; sourceTree = "<group>"; };
 		FR3000000000000000000000 /* GlossaryReplacementTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlossaryReplacementTests.swift; sourceTree = "<group>"; };
 		FR3010000000000000000000 /* LanguageTaggingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LanguageTaggingTests.swift; sourceTree = "<group>"; };
 		FR3020000000000000000000 /* TranscriptCorrectionLockingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptCorrectionLockingTests.swift; sourceTree = "<group>"; };
@@ -335,6 +336,7 @@
 			children = (
 				FR2F00000000000000000000 /* whisper-cpp.xcframework */,
 				FR2F10000000000000000000 /* native-engines.xcconfig */,
+				FR2F20000000000000000000 /* whisper-inputs.xcfilelist */,
 			);
 			path = Native;
 			sourceTree = "<group>";
@@ -628,9 +630,11 @@
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = ();
-			inputPaths = ("$(SRCROOT)");
+			inputFileListPaths = ("$(VARTA_WHISPER_INPUT_FILE_LIST)");
+			inputPaths = ("$(SRCROOT)/Native/prepare-whisper.py");
 			name = "Embed optional whisper";
 			outputPaths = ("$(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)");
+			outputFileListPaths = ("$(VARTA_WHISPER_OUTPUT_FILE_LIST)");
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "set -eu\nconfig=\"${SRCROOT}/.audit/native/whisper.generated.xcconfig\"\nif [ -f \"$config\" ]; then\n  python3 \"${SRCROOT}/Native/prepare-whisper.py\" --prepared-config \"$config\" --embed-directory \"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}\"\nfi\n";

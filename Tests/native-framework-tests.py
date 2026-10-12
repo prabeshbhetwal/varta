@@ -3,7 +3,9 @@
 
 import os
 import hashlib
+import json
 import plistlib
+import shutil
 import stat
 import struct
 import subprocess
@@ -304,6 +306,70 @@ class NativeFrameworkTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue((self.embed / "whisper.framework").exists())
         self.assertEqual(self.config.stat().st_mtime_ns, before)
+
+    def test_generated_filelists_enumerate_only_verified_bundle_inputs_and_outputs(self):
+        framework = self.framework()
+        self.assertEqual(self.run_cli(embed=False).returncode, 0)
+        inputs = self.config.with_suffix(".inputs.xcfilelist")
+        outputs = self.config.with_suffix(".outputs.xcfilelist")
+        self.assertTrue(inputs.exists())
+        source_paths = {line for line in inputs.read_text().splitlines() if line and not line.startswith("#")}
+        self.assertIn(str(self.config), source_paths)
+        self.assertIn(str(self.artifact / "Info.plist"), source_paths)
+        self.assertIn(str(framework / "whisper"), source_paths)
+        self.assertIn(str(framework / "Versions/A/whisper"), source_paths)
+        self.assertNotIn(str(self.root), source_paths)
+        output_paths = {line for line in outputs.read_text().splitlines() if line and not line.startswith("#")}
+        prefix = "$(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)"
+        self.assertIn(prefix + "/whisper.framework/Versions/A/whisper", output_paths)
+        self.assertTrue(all(path.startswith(prefix) for path in output_paths))
+        self.assertIn("VARTA_WHISPER_INPUT_FILE_LIST = " + str(inputs), self.config.read_text())
+        self.assertIn("VARTA_WHISPER_OUTPUT_FILE_LIST = " + str(outputs), self.config.read_text())
+
+    def test_static_framework_declares_no_embed_outputs(self):
+        self.framework(b"!<arch>\n")
+        self.assertEqual(self.run_cli(embed=False).returncode, 0)
+        outputs = self.config.with_suffix(".outputs.xcfilelist").read_text()
+        self.assertFalse(any(line and not line.startswith("#") for line in outputs.splitlines()))
+
+    def test_existing_user_filelist_is_preserved(self):
+        self.framework()
+        self.config.parent.mkdir(parents=True)
+        inputs = self.config.with_suffix(".inputs.xcfilelist")
+        inputs.write_text("/user/input\n")
+        self.assert_failure(self.run_cli())
+        self.assertEqual(inputs.read_text(), "/user/input\n")
+        self.assertFalse(self.config.exists())
+        self.assertFalse(self.embed.exists())
+
+    @unittest.skipUnless(sys.platform == "darwin" and shutil.which("sandbox-exec"), "macOS sandbox-exec required")
+    def test_literal_filelist_permissions_allow_sandboxed_embedding(self):
+        self.framework()
+        self.assertEqual(self.run_cli(embed=False).returncode, 0)
+        self.embed.parent.mkdir(parents=True)
+        inputs = [line for line in self.config.with_suffix(".inputs.xcfilelist").read_text().splitlines()
+                  if line and not line.startswith("#")]
+        inputs.append(str(SCRIPT))
+        outputs = [line.replace("$(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)", str(self.embed))
+                   for line in self.config.with_suffix(".outputs.xcfilelist").read_text().splitlines()
+                   if line and not line.startswith("#")]
+        source_root = SCRIPT.parents[1]
+        blocked_roots = (self.root, source_root)
+        rules = ["(version 1)", "(allow default)"]
+        rules.extend("(deny file-read* file-write* (subpath " + json.dumps(str(root)) + "))" for root in blocked_roots)
+        for value in inputs + outputs:
+            for parent in Path(value).parents:
+                if any(parent == root or root in parent.parents for root in blocked_roots):
+                    rules.append("(allow file-read* (literal " + json.dumps(str(parent)) + "))")
+        rules.extend("(allow file-read* (literal " + json.dumps(value) + "))" for value in inputs)
+        rules.extend("(allow file-read* file-write* (literal " + json.dumps(value) + "))" for value in outputs)
+        profile = self.root / "embed.sb"
+        profile.write_text("\n".join(rules))
+        result = subprocess.run(["sandbox-exec", "-f", str(profile), sys.executable, str(SCRIPT),
+                                 "--prepared-config", str(self.config), "--embed-directory", str(self.embed)],
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.embed / "whisper.framework/whisper").read_bytes(), macho())
 
 
 if __name__ == "__main__":

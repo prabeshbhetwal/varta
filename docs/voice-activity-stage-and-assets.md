@@ -11,6 +11,11 @@ convert to original sample frames; overlapping/touching padded spans merge. ASR
 reads those original-buffer ranges and restores their offsets. Original source and
 prepared audio are never rewritten or compacted.
 
+Both engines accumulate bounded PCM reads because AVFoundation may return fewer
+frames than requested before EOF. The shared reader requires exact file length and
+position, finite samples and forward progress; it never pads missing samples.
+The sample array remains alive throughout each synchronous native call.
+
 Quiet windows complete without calling Whisper. Successful all-quiet processing
 preserves prior transcript, generated outputs and audio, records a completed job
 with a no-speech diagnostic, and shows a no-speech message. A positive speech

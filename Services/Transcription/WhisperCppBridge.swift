@@ -141,16 +141,11 @@ struct WhisperCppBridge: WhisperCppClient {
         let modelURL = try configuration.models.whisperModelURL()
         let audio = try AVAudioFile(forReading: mediaURL, commonFormat: .pcmFormatFloat32, interleaved: false)
         guard audio.processingFormat.sampleRate == 16_000, audio.processingFormat.channelCount == 1,
-              audio.length > 0, audio.length <= 16_000 * 30,
-              let buffer = AVAudioPCMBuffer(pcmFormat: audio.processingFormat, frameCapacity: AVAudioFrameCount(audio.length)) else {
+              audio.length > 0, audio.length <= 16_000 * 30 else {
             throw LocalModelError.inferenceFailed("Whisper requires a 16 kHz mono WAV window of at most thirty seconds.")
         }
         try WhisperDecodingPolicy.validateSpeechSpans(speechSpans, frameCount: audio.length)
-        try audio.read(into: buffer)
-        guard Int64(buffer.frameLength) == audio.length else {
-            throw LocalModelError.inferenceFailed("Prepared audio changed or was truncated before speech decoding.")
-        }
-        guard let channels = buffer.floatChannelData else { throw LocalModelError.inferenceFailed("WAV samples are unavailable.") }
+        let samples = try VoiceActivityAudioReader.readComplete(audio, frameCount: audio.length)
         var contextParameters = whisper_context_default_params()
         contextParameters.use_gpu = true
         guard let context = modelURL.path.withCString({ whisper_init_from_file_with_params($0, contextParameters) }) else {
@@ -184,13 +179,18 @@ struct WhisperCppBridge: WhisperCppClient {
                 try Task.checkCancellation()
                 parameters.n_max_text_ctx = decodingPrompt.isEmpty ? 0 : 224
                 let language = languageMode == .mixed ? "auto" : languageMode.rawValue
-                // Both C strings stay alive until decoding this original-buffer crop returns.
-                let status = decodingPrompt.withCString { prompt in
-                    parameters.initial_prompt = decodingPrompt.isEmpty ? nil : prompt
-                    return language.withCString { language in
-                        parameters.language = language
-                        return whisper_full(context, parameters, channels[0].advanced(by: Int(span.startFrame)),
-                            Int32(span.endFrame - span.startFrame))
+                // PCM and both C strings remain owned until this synchronous crop decode returns.
+                let status = try samples.withUnsafeBufferPointer { pcm in
+                    guard let baseAddress = pcm.baseAddress else {
+                        throw LocalModelError.inferenceFailed("Complete PCM audio is unavailable.")
+                    }
+                    return decodingPrompt.withCString { prompt in
+                        parameters.initial_prompt = decodingPrompt.isEmpty ? nil : prompt
+                        return language.withCString { language in
+                            parameters.language = language
+                            return whisper_full(context, parameters, baseAddress.advanced(by: Int(span.startFrame)),
+                                Int32(span.endFrame - span.startFrame))
+                        }
                     }
                 }
                 try Task.checkCancellation()

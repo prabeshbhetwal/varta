@@ -56,6 +56,28 @@ final class VoiceActivityTests: XCTestCase {
         catch { XCTFail("Expected cancellation, received \(error)") }
     }
 
+    func testCompletePCMReadPreservesOddFrameCountAndFinalSample() throws {
+        var samples = [Float](repeating: 0, count: 32_017)
+        samples[32_016] = 0.25
+        let audio = try AVAudioFile(forReading: writeAudio(samples), commonFormat: .pcmFormatFloat32, interleaved: false)
+        let result = try VoiceActivityAudioReader.readComplete(audio, frameCount: 32_017)
+        XCTAssertEqual(result.count, 32_017)
+        XCTAssertEqual(result.last, 0.25)
+        XCTAssertEqual(audio.framePosition, 32_017)
+    }
+
+    func testCompletePCMReadRejectsLengthMismatchAndNonfiniteSamples() throws {
+        let url = try writeAudio([Float](repeating: 0, count: 32_017))
+        let wrongLength = try AVAudioFile(forReading: url, commonFormat: .pcmFormatFloat32, interleaved: false)
+        XCTAssertThrowsError(try VoiceActivityAudioReader.readComplete(wrongLength, frameCount: 32_016))
+        var invalid = [Float](repeating: 0, count: 32_017)
+        invalid[100] = .nan
+        let nonfinite = try AVAudioFile(forReading: writeAudio(invalid), commonFormat: .pcmFormatFloat32, interleaved: false)
+        XCTAssertThrowsError(try VoiceActivityAudioReader.readComplete(nonfinite, frameCount: 32_017)) { error in
+            XCTAssertTrue(error.localizedDescription.contains("non-finite sample at frame 100"))
+        }
+    }
+
     func testNativeSileroRejectsSilenceWithCompleteProbabilityCoverage() async throws {
         let root = try fixtureRoot()
         let silence = try writeAudio([Float](repeating: 0, count: 32_017))
@@ -106,9 +128,7 @@ final class VoiceActivityTests: XCTestCase {
 
     private func readAudio(_ url: URL) throws -> [Float] {
         let file = try AVAudioFile(forReading: url, commonFormat: .pcmFormatFloat32, interleaved: false)
-        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: AVAudioFrameCount(file.length)))
-        try file.read(into: buffer)
-        return Array(UnsafeBufferPointer(start: try XCTUnwrap(buffer.floatChannelData)[0], count: Int(buffer.frameLength)))
+        return try VoiceActivityAudioReader.readComplete(file, frameCount: file.length)
     }
 
     private func writeAudio(_ samples: [Float]) throws -> URL {

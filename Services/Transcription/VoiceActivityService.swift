@@ -75,6 +75,46 @@ enum VoiceActivityPolicy {
     }
 }
 
+enum VoiceActivityAudioReader {
+    static func readComplete(_ audio: AVAudioFile, frameCount: Int64) throws -> [Float] {
+        try Task.checkCancellation()
+        _ = try VoiceActivityPolicy.probabilityCount(frameCount: frameCount)
+        guard audio.length == frameCount, audio.framePosition == 0,
+              audio.processingFormat.sampleRate == 16_000, audio.processingFormat.channelCount == 1,
+              audio.processingFormat.commonFormat == .pcmFormatFloat32,
+              let scratch = AVAudioPCMBuffer(pcmFormat: audio.processingFormat,
+                frameCapacity: AVAudioFrameCount(min(frameCount, 4_096))) else {
+            throw LocalModelError.invalidOutput("Audio PCM input differs: requested \(frameCount) frames, file \(audio.length), position \(audio.framePosition); expected fresh 16 kHz mono Float32 audio.")
+        }
+        var samples: [Float] = []
+        samples.reserveCapacity(Int(frameCount))
+        while samples.count < Int(frameCount) {
+            try Task.checkCancellation()
+            let requested = AVAudioFrameCount(min(Int(scratch.frameCapacity), Int(frameCount) - samples.count))
+            let position = audio.framePosition
+            scratch.frameLength = 0
+            try audio.read(into: scratch, frameCount: requested)
+            let received = Int(scratch.frameLength)
+            guard received > 0, received <= Int(requested), audio.framePosition - position == Int64(received),
+                  let channel = scratch.floatChannelData?[0] else {
+                throw LocalModelError.invalidOutput("Audio PCM read incomplete: expected \(frameCount), collected \(samples.count), requested \(requested), received \(received), position \(audio.framePosition).")
+            }
+            try withExtendedLifetime(scratch) {
+                let chunk = UnsafeBufferPointer(start: channel, count: received)
+                if let index = chunk.firstIndex(where: { !$0.isFinite }) {
+                    throw LocalModelError.invalidOutput("Audio PCM contains a non-finite sample at frame \(samples.count + index) of \(frameCount).")
+                }
+                samples.append(contentsOf: chunk)
+            }
+        }
+        try Task.checkCancellation()
+        guard samples.count == Int(frameCount), audio.framePosition == frameCount else {
+            throw LocalModelError.invalidOutput("Audio PCM length differs: expected \(frameCount), read \(samples.count), final position \(audio.framePosition).")
+        }
+        return samples
+    }
+}
+
 struct WhisperVoiceActivityDetector: VoiceActivityDetecting {
     let configuration: LocalModelConfiguration
 
@@ -98,15 +138,7 @@ struct WhisperVoiceActivityDetector: VoiceActivityDetecting {
         let audio = try AVAudioFile(forReading: mediaURL, commonFormat: .pcmFormatFloat32, interleaved: false)
         let frameCount = audio.length
         let expectedCount = try VoiceActivityPolicy.probabilityCount(frameCount: frameCount)
-        guard audio.processingFormat.sampleRate == 16_000, audio.processingFormat.channelCount == 1,
-              let buffer = AVAudioPCMBuffer(pcmFormat: audio.processingFormat, frameCapacity: AVAudioFrameCount(frameCount)) else {
-            throw LocalModelError.invalidOutput("VAD requires 16 kHz mono audio.")
-        }
-        try audio.read(into: buffer)
-        guard Int64(buffer.frameLength) == frameCount, let channels = buffer.floatChannelData,
-              UnsafeBufferPointer(start: channels[0], count: Int(frameCount)).allSatisfy({ $0.isFinite }) else {
-            throw LocalModelError.invalidOutput("VAD audio samples are incomplete or invalid.")
-        }
+        let samples = try VoiceActivityAudioReader.readComplete(audio, frameCount: frameCount)
         try Task.checkCancellation()
         var contextParameters = whisper_vad_default_context_params()
         contextParameters.n_threads = 2
@@ -130,7 +162,9 @@ struct WhisperVoiceActivityDetector: VoiceActivityDetecting {
         }
         for index in 0..<expectedCount { warmProbabilities[index] = .nan }
         try Task.checkCancellation()
-        let detected = whisper_vad_detect_speech(context, channels[0], Int32(frameCount))
+        let detected = samples.withUnsafeBufferPointer {
+            whisper_vad_detect_speech(context, $0.baseAddress, Int32(frameCount))
+        }
         try Task.checkCancellation()
         guard detected, Int(whisper_vad_n_probs(context)) == expectedCount,
               let probabilities = whisper_vad_probs(context) else {

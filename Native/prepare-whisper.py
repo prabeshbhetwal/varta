@@ -152,25 +152,38 @@ def select_framework(root):
     return framework
 
 
-def same_tree(source, destination):
+def tree_difference(source, destination, relative=Path(".")):
     if source.is_symlink() or destination.is_symlink():
-        return source.is_symlink() and destination.is_symlink() and os.readlink(source) == os.readlink(destination)
+        if source.is_symlink() and destination.is_symlink() and os.readlink(source) == os.readlink(destination):
+            return None
+        return str(relative) + ": symlink/type mismatch"
     if source.is_dir() and destination.is_dir():
         names = {path.name for path in source.iterdir()}
-        return names == {path.name for path in destination.iterdir()} and all(
-            same_tree(source / name, destination / name) for name in names
-        )
+        destination_names = {path.name for path in destination.iterdir()}
+        if names != destination_names:
+            return str(relative) + ": directory entries differ; missing=" + repr(sorted(names - destination_names)[:5]) + "; extra=" + repr(sorted(destination_names - names)[:5])
+        for name in sorted(names):
+            difference = tree_difference(source / name, destination / name, relative / name)
+            if difference is not None:
+                return difference
+        return None
     if source.is_file() and destination.is_file():
         if source.stat().st_size != destination.stat().st_size:
-            return False
+            return str(relative) + ": file sizes differ; source=" + str(source.stat().st_size) + "; destination=" + str(destination.stat().st_size)
         with source.open("rb") as left, destination.open("rb") as right:
             while True:
                 chunk = left.read(1024 * 1024)
                 if chunk != right.read(1024 * 1024):
-                    return False
+                    return str(relative) + ": file content differs"
                 if not chunk:
-                    return True
-    return False
+                    return None
+    return str(relative) + ": entry types differ"
+
+
+def empty_directory_skeleton(source, destination):
+    if source.is_symlink() or destination.is_symlink() or not source.is_dir() or not destination.is_dir():
+        return False
+    return all(empty_directory_skeleton(source / child.name, child) for child in destination.iterdir())
 
 
 def extract_archive(archive, expected_sha256, destination):
@@ -292,11 +305,15 @@ def prepare(xcframework, config_output, embed_directory=None, write_config=True)
     framework = select_framework(root)
     kind = binary_kind(framework / "whisper") if framework is not None else "unavailable"
     if kind == "dynamic" and destination is not None:
-        if destination.is_symlink() or destination.exists() and not same_tree(framework, destination):
-            raise PreparationError("embed destination differs; choose a fresh generated output directory")
-        if not destination.exists():
+        difference = tree_difference(framework, destination) if destination.exists() else None
+        identical = destination.exists() and difference is None
+        skeleton = destination.exists() and empty_directory_skeleton(framework, destination)
+        if destination.is_symlink() or destination.exists() and not (identical or skeleton):
+            raise PreparationError("embed destination differs; " + str(difference) + "; choose a fresh generated output directory")
+        if not identical:
             destination.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copytree(framework, destination, symlinks=True)
+            # Xcode may pre-create declared output directories; validation excludes all existing data.
+            shutil.copytree(framework, destination, symlinks=True, dirs_exist_ok=skeleton)
     content = MARKER + "VARTA_WHISPER_XCFRAMEWORK = " + str(root) + "\nFRAMEWORK_SEARCH_PATHS = $(inherited)"
     if framework is not None:
         content += ' "' + str(framework.parent) + '"'

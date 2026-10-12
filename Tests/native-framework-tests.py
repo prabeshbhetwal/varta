@@ -342,11 +342,43 @@ class NativeFrameworkTests(unittest.TestCase):
         self.assertFalse(self.config.exists())
         self.assertFalse(self.embed.exists())
 
+    def test_xcode_empty_directory_skeleton_can_receive_framework(self):
+        self.framework()
+        for name in ("Versions/A/Headers", "Versions/A/Modules"):
+            (self.embed / "whisper.framework" / name).mkdir(parents=True, exist_ok=True)
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.embed / "whisper.framework/whisper").read_bytes(), macho())
+        self.assertEqual(os.readlink(self.embed / "whisper.framework/Versions/Current"), "A")
+
+    def test_partial_file_symlink_or_unknown_directory_is_preserved_and_rejected(self):
+        self.framework()
+        for name, entry_kind in (("Versions/A/whisper", "file"), ("Versions/A/Headers", "symlink"),
+                                 ("user-directory", "directory"), ("Headers", "directory")):
+            with self.subTest(name=name, entry_kind=entry_kind):
+                self.embed = self.root / ("output-" + name.replace("/", "-"))
+                entry = self.embed / "whisper.framework" / name
+                entry.parent.mkdir(parents=True)
+                if entry_kind == "file":
+                    entry.write_bytes(b"preserve")
+                elif entry_kind == "symlink":
+                    entry.symlink_to("elsewhere")
+                else:
+                    entry.mkdir()
+                self.assert_failure(self.run_cli())
+                if entry_kind == "file":
+                    self.assertEqual(entry.read_bytes(), b"preserve")
+                elif entry_kind == "symlink":
+                    self.assertEqual(os.readlink(entry), "elsewhere")
+                else:
+                    self.assertTrue(entry.is_dir())
+
     @unittest.skipUnless(sys.platform == "darwin" and shutil.which("sandbox-exec"), "macOS sandbox-exec required")
     def test_literal_filelist_permissions_allow_sandboxed_embedding(self):
         self.framework()
         self.assertEqual(self.run_cli(embed=False).returncode, 0)
-        self.embed.parent.mkdir(parents=True)
+        for name in ("Versions/A/Headers", "Versions/A/Modules"):
+            (self.embed / "whisper.framework" / name).mkdir(parents=True, exist_ok=True)
         inputs = [line for line in self.config.with_suffix(".inputs.xcfilelist").read_text().splitlines()
                   if line and not line.startswith("#")]
         inputs.append(str(SCRIPT))

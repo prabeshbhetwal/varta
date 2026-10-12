@@ -35,6 +35,9 @@ struct ImportedMediaRecord: Identifiable, Sendable {
     let sampleRateHz: Int?
     let channelCount: Int?
     let createdAt: Date
+    var source: String? = nil
+    var segmentIndex: Int? = nil
+    var timelineOffsetSeconds: Double? = nil
 }
 
 struct TranscriptSegment: Identifiable, Sendable {
@@ -57,7 +60,7 @@ struct TranscriptSegment: Identifiable, Sendable {
     }
 }
 
-struct NewTranscriptSegment: Sendable {
+struct NewTranscriptSegment: Codable, Sendable {
     let startSeconds: Double
     let endSeconds: Double
     let text: String
@@ -72,13 +75,13 @@ struct GlossaryTerm: Identifiable, Sendable {
     let languageCode: LanguageMode
 }
 
-struct SummaryContent: Sendable {
+struct SummaryContent: Codable, Sendable {
     let concise: String
     let detailed: String
     let bullets: String
 }
 
-struct GeneratedOutput: Identifiable, Sendable {
+struct GeneratedOutput: Identifiable, Codable, Equatable, Sendable {
     var id: String { "\(type.rawValue)-\(language.rawValue)" }
 
     let type: GeneratedOutputType
@@ -89,6 +92,38 @@ struct GeneratedOutput: Identifiable, Sendable {
 struct MeetingOutputs: Sendable {
     let summary: SummaryContent
     let outputs: [GeneratedOutput]
+}
+
+struct TranscriptSearchResult: Identifiable, Sendable {
+    let id: Int64
+    let meetingID: String
+    let title: String
+    let text: String
+    let startSeconds: Double
+}
+
+struct CalendarCandidate: Codable, Hashable, Identifiable, Sendable {
+    var id: String { sourceQuote + "|" + (dateHint ?? "") }
+    let title: String
+    let dateHint: String?
+    let durationMinutes: Double?
+    let reason: String
+    let sourceQuote: String
+
+    enum CodingKeys: String, CodingKey {
+        case title, reason
+        case dateHint = "date_hint"
+        case durationMinutes = "duration_minutes"
+        case sourceQuote = "source_quote"
+    }
+
+    func validate() throws {
+        guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, title.count <= 200,
+              !sourceQuote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              durationMinutes.map({ $0.isFinite && $0 > 0 && $0 <= 1_440 }) ?? true else {
+            throw LocalModelError.invalidOutput("Invalid calendar candidate title, quote or duration.")
+        }
+    }
 }
 
 enum JobType: String, CaseIterable, Codable, Sendable {

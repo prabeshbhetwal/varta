@@ -39,12 +39,14 @@ final class LocalImportLoopIntegrationTests: XCTestCase {
         try await storage.replaceTranscriptSegments(meetingID: meetingID, segments: [
             NewTranscriptSegment(startSeconds: 0, endSeconds: 1, text: "Existing transcript", languageTag: "en", speakerLabel: nil)
         ])
-        let transcription = TranscriptionService(storageService: storage, memoryManager: MemoryManager())
+        let missing = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        let transcription = TranscriptionService(storageService: storage, memoryManager: MemoryManager(),
+            whisperClient: WhisperCppBridge(configuration: WhisperCppConfiguration(models: LocalModelConfiguration(whisperOverride: missing))))
         do {
             _ = try await transcription.transcribeMeeting(meetingID: meetingID, mediaURL: makeSampleMediaFile(), languageMode: .english)
-            XCTFail("An unintegrated engine must fail rather than invent a transcript")
+            XCTFail("Missing local assets must fail rather than invent a transcript")
         } catch {
-            XCTAssertTrue(error.localizedDescription.contains("whisper.cpp engine and model"))
+            XCTAssertTrue(error is LocalModelError)
         }
         let segments = try await storage.transcriptSegments(meetingID: meetingID)
         XCTAssertEqual(segments.map(\.text), ["Existing transcript"])

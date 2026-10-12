@@ -1,3 +1,5 @@
 Translate while preserving original meaning and structure.
 Do not omit factual details.
 Keep list formatting intact.
+Use the target_language supplied in the JSON context. Return only the translated content.
+If the content is JSON, preserve its keys and structure while translating human-readable values.

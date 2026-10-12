@@ -1,20 +1,22 @@
 # Varta development build
 
-Varta is an unfinished, local macOS meeting recorder. The current code can import
-media, store recordings and review existing transcripts. It is not yet the AI
-meeting assistant described in the product brief.
+Varta is a local macOS meeting assistant under verification. The code now connects
+import/recording, Whisper transcription, transcript review, local MLX generation,
+translation and reviewed Calendar creation. Native tests and real model/hardware
+checks must establish readiness; implementation alone is not passing evidence.
 
 ## Current boundary
 
-- The whisper.cpp framework is a placeholder; model weights are absent. Production
-  transcription returns an explicit unavailable error and preserves existing data.
-- Summarisation and translation services contain deterministic text heuristics,
-  not MLX inference. They are not exposed as completed features.
-- Calendar creation, a search screen, audio playback/seek, full-session recovery
-  and the optional diarisation worker remain unfinished.
-- Microphone and system audio are recorded into separate files. They are not mixed
-  into one recording. Four-hour endurance and hardware permission flows require
-  separate verification.
+- Real whisper.cpp/Metal and MLX Swift LM adapters require valid local assets.
+  Missing engines, weights or invalid model responses fail explicitly.
+- Media conversion streams 16 kHz mono WAV windows. Processing and playback combine
+  all recording chunks and sources on their stored timeline.
+- Summary/translation, playback/seek, FTS search and reviewed Calendar controls are
+  wired. Generated content commits atomically; transcript edits invalidate stale output.
+- Finalised recording chunks and transcription windows have durable checkpoints.
+  The latest open AAC chunk may be unrecoverable after abrupt termination. Physical
+  capture, timing calibration, four-hour endurance and optional diarisation remain
+  external checks or optional work.
 
 Authoritative scope: [blueprint](https://github.com/prabeshbhetwal/varta/blob/c5d3d66/Varta-blueprint.md),
 [MVP specification](https://github.com/prabeshbhetwal/varta/blob/c5d3d66/MVP-build-spec.md) and
@@ -26,8 +28,9 @@ behaviour; an unchecked task list and a compiling build do not establish complet
 ## Requirements
 
 Apple Silicon Mac, macOS 14 or later, full Xcode selected with `xcode-select`,
-internet access for the pinned GRDB Swift package. No cloud provider, API key,
-Docker service or paid account is required for this development build.
+internet access for Swift dependencies, prepared whisper.cpp Apple framework and
+local model assets. No cloud provider, API key, Docker service or paid account is
+required. See [native setup and checks](native-setup-and-checks.md) before building.
 
 Run every command below from:
 
@@ -58,18 +61,18 @@ database is `demo-data/varta.sqlite` and companion media/prompts are under
 1. Continue onboarding; permissions may be requested when needed.
 2. Use **Import** (Command-I) with synthetic audio, or choose **Audio Sources** and
    record a consenting test session. Stop finalises the captured audio.
-3. Select a meeting. **Show Audio in Finder** exposes its saved audio. Transcript
-   generation currently reports unavailable. Existing transcripts support
-   corrections, locking, copying and text export.
+3. Select a meeting. Choose language, transcribe, review corrections/locks, generate
+   content, then translate if needed. Playback supports seeking to transcript rows.
+   Calendar suggestions require reviewed title, date, duration and explicit creation.
 
 Settings are available through the standard app Settings menu. System audio
 requires macOS Screen Recording permission; microphone capture requires Microphone
 permission. Permission prompts and live capture are not part of automated tests.
 
 Stop a recording before quitting with Command-Q. Varta has no background web
-server. Abrupt termination can invalidate the current recording segment; automatic
-recovery is not implemented. Do not use this build as the sole copy of important
-meeting audio.
+server. On restart, interrupted jobs become paused; use explicit recovery/resume
+controls. Abrupt termination can invalidate the latest open AAC chunk. Retain source
+audio until native capture and recovery checks pass.
 
 ## Tests
 
@@ -102,5 +105,5 @@ Existing tracked metadata remains in history; do not rewrite history or remove
 existing local work without approval. Never commit personal audio or model weights.
 
 Distribution remains blocked: signing is disabled, no development team is set,
-native inference is not integrated and required end-to-end/hardware checks are
+required real inference, end-to-end and hardware checks are
 missing. There is no signed or notarised release from this audit.

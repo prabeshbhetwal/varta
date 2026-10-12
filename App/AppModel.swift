@@ -51,6 +51,9 @@ final class AppModel: ObservableObject {
             )
 
             let onboardingValue = try await settingsStore.bool(for: .onboardingCompleted) ?? false
+            _ = try await jobQueue.recoverInterruptedRecordingJobs()
+            _ = try await TranscriptionService(storageService: storageService, memoryManager: memoryManager).recoverInterruptedJobs()
+            try await storageService.recoverInterruptedGenerationJobs()
 
             self.storageService = storageService
             self.settingsStore = settingsStore

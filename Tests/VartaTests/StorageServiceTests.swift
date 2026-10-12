@@ -122,7 +122,11 @@ final class StorageServiceTests: XCTestCase {
     func testDeleteRejectsPathsOutsideMeetingFolder() async throws {
         let storage = try StorageService(databaseURL: temporaryDatabaseURL())
         let meetingID = try await storage.createMeeting(title: "Unsafe fixture", languageMode: .english)
-        try await storage.registerImportedMedia(meetingID: meetingID, relativePath: "../outside.txt", originalFilename: "outside.txt", format: "txt", durationSeconds: nil)
+        do {
+            try await storage.registerImportedMedia(meetingID: meetingID, relativePath: "../outside.txt", originalFilename: "outside.txt", format: "txt", durationSeconds: nil)
+            XCTFail("Registration must reject traversal")
+        } catch StorageService.StorageError.unsafeMediaPath { }
+        try await storage.registerImportedMedia(meetingID: meetingID, relativePath: "Other/outside.txt", originalFilename: "outside.txt", format: "txt", durationSeconds: nil)
         do {
             try await storage.deleteMeetingAndFiles(meetingID: meetingID)
             XCTFail("Expected path containment validation")

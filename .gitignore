@@ -6,3 +6,6 @@
 .code-review-graph/
 build/
 DerivedData/
+Models/**/*.bin
+Models/**/*.safetensors
+Models/**/*.gguf

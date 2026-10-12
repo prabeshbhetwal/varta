@@ -210,6 +210,33 @@ enum VartaMigrations {
             """)
         }
 
+        migrator.registerMigration("005_transcript_revision") { db in
+            try db.alter(table: "meetings") { table in
+                table.add(column: "transcript_revision", .integer).notNull().defaults(to: 0)
+            }
+            for (suffix, operation, row) in [("ai", "INSERT", "NEW"), ("au", "UPDATE", "NEW"), ("ad", "DELETE", "OLD")] {
+                try db.execute(sql: """
+                CREATE TRIGGER transcript_revision_\(suffix) AFTER \(operation) ON transcript_segments BEGIN
+                    UPDATE meetings SET transcript_revision = transcript_revision + 1, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = \(row).meeting_id;
+                END
+                """)
+            }
+        }
+
+        migrator.registerMigration("006_audio_timeline_and_calendar_receipts") { db in
+            try db.alter(table: "audio_files") { table in
+                table.add(column: "source", .text)
+                table.add(column: "segment_index", .integer)
+                table.add(column: "timeline_offset_seconds", .double)
+            }
+            try db.alter(table: "calendar_links") { table in
+                table.add(column: "candidate_key", .text)
+                table.add(column: "status", .text).notNull().defaults(to: "completed")
+            }
+            try db.execute(sql: "CREATE UNIQUE INDEX calendar_candidate_receipt ON calendar_links(meeting_id, candidate_key)")
+        }
+
         return migrator
     }
 }

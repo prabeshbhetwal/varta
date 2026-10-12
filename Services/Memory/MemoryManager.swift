@@ -14,22 +14,32 @@ actor MemoryManager {
     }
 
     private var activeFamily: ModelFamily?
+    private var cancelActiveOperation: (@Sendable () -> Void)?
     private var runtimeMode: RuntimeMode = .normal
     private var thermalState: ProcessInfo.ThermalState = .nominal
     private var onBattery = false
 
     func runExclusive<T: Sendable>(
         family: ModelFamily,
-        operation: @Sendable () async throws -> T
+        operation: @escaping @Sendable () async throws -> T
     ) async throws -> T {
         while runtimeMode == .paused || activeFamily != nil {
             try await Task.sleep(nanoseconds: 25_000_000)
         }
         try Task.checkCancellation()
         activeFamily = family
-        defer { activeFamily = nil }
+        let task = Task { try await operation() }
+        cancelActiveOperation = { task.cancel() }
+        defer {
+            activeFamily = nil
+            cancelActiveOperation = nil
+        }
 
-        return try await operation()
+        return try await withTaskCancellationHandler {
+            try await task.value
+        } onCancel: {
+            task.cancel()
+        }
     }
 
     func currentRuntimeMode() -> RuntimeMode {
@@ -54,6 +64,7 @@ actor MemoryManager {
             runtimeMode = .reduced
         case .critical:
             runtimeMode = .paused
+            cancelActiveOperation?()
         @unknown default:
             runtimeMode = .reduced
         }

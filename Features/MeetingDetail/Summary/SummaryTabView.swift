@@ -1,36 +1,51 @@
 import SwiftUI
 
-// Deprecated in transcript-first UI. Kept to avoid breaking build where referenced.
 struct SummaryTabView: View {
     @ObservedObject var viewModel: MeetingDetailViewModel
-    var body: some View {
-        // Forward to MeetingDetailView's simplified content by embedding TranscriptOnlyView
-        TranscriptOnlyView(viewModel: viewModel)
-    }
-}
-
-// A lightweight transcript-only view used by SummaryTabView for compatibility.
-private struct TranscriptOnlyView: View {
-    @ObservedObject var viewModel: MeetingDetailViewModel
+    @State private var summaryStyle = "Concise"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Recording Transcript").font(.title3).bold()
+                Picker("Summary format", selection: $summaryStyle) {
+                    Text("Concise").tag("Concise")
+                    Text("Detailed").tag("Detailed")
+                    Text("Bullets").tag("Bullets")
+                }.pickerStyle(.segmented)
                 Spacer()
-                Button("Generate Transcript") {
-                    Task { await viewModel.generateTranscript() }
-                }.disabled(viewModel.isGeneratingTranscript)
+                Button("Generate / Resume Summary & Outputs") { viewModel.startSummary() }
+                    .disabled(viewModel.isProcessing || viewModel.segments.isEmpty)
+                    .help("Resume saved processing when transcript and prompts are unchanged.")
             }
-            Text("Transcription is unavailable in this development build. Your audio remains saved locally.")
-                .foregroundStyle(.secondary)
-            TranscriptTabView(viewModel: viewModel)
-            HStack {
-                Button("Copy Transcript") { viewModel.copyTranscriptToClipboard() }
-                Button("Export Transcript") { viewModel.exportTranscript() }
-                Button("Show Audio in Finder") { viewModel.openRecordingsFolderInFinder() }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    if let summary = viewModel.summary {
+                        Text(summaryStyle == "Detailed" ? summary.detailed : summaryStyle == "Bullets" ? summary.bullets : summary.concise)
+                            .frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
+                    } else {
+                        Text("Generate a transcript, review corrections, then generate a local summary.")
+                            .foregroundStyle(.secondary)
+                    }
+                    if let actions = viewModel.output(.actionItems) {
+                        GeneratedTextSection(title: "Action Items", content: actions)
+                    }
+                    if let decisions = viewModel.output(.decisions) {
+                        GeneratedTextSection(title: "Decisions", content: decisions)
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .padding(16)
+        .padding(12)
+    }
+}
+
+struct GeneratedTextSection: View {
+    let title: String
+    let content: String
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.headline)
+            Text(content).frame(maxWidth: .infinity, alignment: .leading).textSelection(.enabled)
+        }
     }
 }

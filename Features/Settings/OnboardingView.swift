@@ -9,7 +9,7 @@ struct OnboardingView: View {
                 .font(.largeTitle)
                 .bold()
 
-            Text("Record or import audio locally. Transcription is unavailable in this development build.")
+            Text("Record or import audio locally. Select local models in Settings to transcribe, summarise and translate.")
                 .foregroundStyle(.secondary)
 
             PermissionStatusRow(title: "Microphone", state: appModel.permissions.microphoneState.rawValue)

@@ -21,14 +21,17 @@ final class RecordingControlsViewModel: ObservableObject {
     @Published var userMessage: String?
 
     private let recorderCoordinator: RecorderCoordinator
+    private let settingsStore: SettingsStore?
     private let onRecordingSaved: (String?) -> Void
     private var pollingTask: Task<Void, Never>?
 
     init(
         recorderCoordinator: RecorderCoordinator,
+        settingsStore: SettingsStore? = nil,
         onRecordingSaved: @escaping (String?) -> Void = { _ in }
     ) {
         self.recorderCoordinator = recorderCoordinator
+        self.settingsStore = settingsStore
         self.onRecordingSaved = onRecordingSaved
     }
 
@@ -69,6 +72,34 @@ final class RecordingControlsViewModel: ObservableObject {
         startRecording()
     }
 
+    func restoreInterruptedRecording(jobID: String, storageService: StorageService) async {
+        guard snapshot.state == .idle || snapshot.state == .failed || snapshot.state == .completed else { return }
+        do {
+            errorMessage = nil
+            let checkpoint = try await Checkpointer(storageService: storageService).latestRecordingCheckpoint(jobID: jobID)
+            guard let meetingID = try await storageService.job(id: jobID)?.meetingID else { throw RecorderError.noCoordinatorState }
+            let files = try await storageService.importedMedia(for: meetingID)
+            let sources = Self.recoveredAudioSources(checkpoint: checkpoint, media: files, jobID: jobID)
+            captureMicrophone = sources.microphone
+            captureSystemAudio = sources.system
+            try await recorderCoordinator.restoreInterruptedRecording(jobID: jobID)
+            await refreshSnapshot()
+            userMessage = "Completed audio recovered. Choose Resume or Stop; capture remains paused."
+        } catch {
+            errorMessage = "Recording recovery failed: \(error.localizedDescription)"
+        }
+    }
+
+    nonisolated static func recoveredAudioSources(checkpoint: RecordingCheckpointPayload?, media: [ImportedMediaRecord], jobID: String) -> (microphone: Bool, system: Bool) {
+        let owned = media.filter { $0.relativePath.contains(jobID) || checkpoint?.segmentRelativePaths.contains($0.relativePath) == true }
+        func containsSource(_ source: String) -> Bool {
+            owned.contains { record in
+                record.source == source || (record.source == nil && URL(fileURLWithPath: record.relativePath).deletingPathExtension().lastPathComponent.hasSuffix("-" + source))
+            }
+        }
+        return (checkpoint?.captureMicrophone ?? containsSource("microphone"), checkpoint?.captureSystemAudio ?? containsSource("system"))
+    }
+
     func startRecording() {
         guard snapshot.state == .idle || snapshot.state == .failed || snapshot.state == .completed else {
             return
@@ -78,8 +109,11 @@ final class RecordingControlsViewModel: ObservableObject {
             do {
                 errorMessage = nil
                 userMessage = "Starting recording…"
+                let prefix = try await settingsStore?.string(for: .defaultMeetingTitlePrefix)?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let title = prefix.flatMap { $0.isEmpty ? nil : $0 + " " + Date().formatted(date: .numeric, time: .shortened) }
                 try await recorderCoordinator.startRecording(
                     configuration: RecorderStartConfiguration(
+                        meetingTitle: title,
                         captureMicrophone: captureMicrophone,
                         captureSystemAudio: captureSystemAudio
                     )

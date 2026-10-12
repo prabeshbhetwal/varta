@@ -2,6 +2,10 @@
 import Foundation
 
 final class RecordingWriter: @unchecked Sendable {
+    struct FinishedSegment: Sendable {
+        let durationSeconds: Double
+        let firstPresentationTimeSeconds: Double?
+    }
     enum WriterError: Error {
         case inputNotReady
         case failedToCreateWriter
@@ -133,16 +137,20 @@ final class RecordingWriter: @unchecked Sendable {
     }
 
     func finishWriting() async throws -> Double {
+        try await finishSegment().durationSeconds
+    }
+
+    func finishSegment() async throws -> FinishedSegment {
         try await withCheckedThrowingContinuation { continuation in
             queue.async { [self] in
                 guard let writer = self.writer else {
-                    continuation.resume(returning: 0)
+                    continuation.resume(returning: FinishedSegment(durationSeconds: 0, firstPresentationTimeSeconds: nil))
                     return
                 }
 
                 if writer.status == .unknown {
                     cleanup()
-                    continuation.resume(returning: 0)
+                    continuation.resume(returning: FinishedSegment(durationSeconds: 0, firstPresentationTimeSeconds: nil))
                     return
                 }
 
@@ -158,10 +166,11 @@ final class RecordingWriter: @unchecked Sendable {
                             duration = 0
                         }
 
+                        let firstTime = self.hasStartedSession ? CMTimeGetSeconds(self.firstPTS) : nil
                         self.cleanup()
 
                         if status == .completed {
-                            continuation.resume(returning: duration)
+                            continuation.resume(returning: FinishedSegment(durationSeconds: duration, firstPresentationTimeSeconds: firstTime))
                         } else {
                             continuation.resume(throwing: WriterError.failedToFinishWriting(errorDescription))
                         }
@@ -466,6 +475,69 @@ final class RecordingWriter: @unchecked Sendable {
         firstPTS = .invalid
         lastPTS = .zero
         lastEndPTS = .zero
+    }
+}
+
+// The capture callback keeps this router; swapping writers never stops the audio device.
+final class RecordingWriterRouter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var writer: RecordingWriter?
+    private let captureClock: RecordingCaptureClock
+
+    init(writer: RecordingWriter, captureClock: RecordingCaptureClock) {
+        self.writer = writer
+        self.captureClock = captureClock
+    }
+
+    func append(sampleBuffer: CMSampleBuffer) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        if captureClock.accepts(sampleBuffer: sampleBuffer) { try writer?.append(sampleBuffer: sampleBuffer) }
+    }
+
+    func replace(with writer: RecordingWriter?) {
+        lock.lock()
+        self.writer = writer
+        lock.unlock()
+    }
+}
+
+final class RecordingCaptureClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private let durationLimit: Double
+    private var originSeconds: Double?
+    private var reachedLimit = false
+
+    init(durationLimit: Double) { self.durationLimit = durationLimit }
+
+    func accepts(sampleBuffer: CMSampleBuffer) -> Bool {
+        let start = CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
+        var duration = CMTimeGetSeconds(CMSampleBufferGetDuration(sampleBuffer))
+        let frameCount = CMSampleBufferGetNumSamples(sampleBuffer)
+        if frameCount > 0, let description = CMSampleBufferGetFormatDescription(sampleBuffer),
+           CMFormatDescriptionGetMediaType(description) == kCMMediaType_Audio,
+           let basic = CMAudioFormatDescriptionGetStreamBasicDescription(description),
+           basic.pointee.mFormatID == kAudioFormatLinearPCM,
+           basic.pointee.mSampleRate.isFinite, basic.pointee.mSampleRate >= 1,
+           basic.pointee.mSampleRate <= Double(Int32.max) {
+            // Match writer normalisation even when capture omits or misstates raw timing duration.
+            duration = Double(frameCount) / basic.pointee.mSampleRate
+        }
+        guard start.isFinite, duration.isFinite, duration >= 0 else { return true }
+        lock.lock()
+        defer { lock.unlock() }
+        originSeconds = min(originSeconds ?? start, start)
+        if start - (originSeconds ?? start) + duration > durationLimit {
+            reachedLimit = true
+            return false
+        }
+        return true
+    }
+
+    func hasReachedLimit() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return reachedLimit
     }
 }
 

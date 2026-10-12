@@ -24,6 +24,7 @@ struct HomeView: View {
                 let viewModel = viewModelHolder.viewModel(storageService: storage)
                 let recordingVM = recordingVMHolder.viewModel(
                     recorderCoordinator: recorderCoordinator,
+                    settingsStore: appModel.settingsStore,
                     onRecordingSaved: { meetingID in
                         Task {
                             await viewModel.refreshMeetings(select: meetingID)
@@ -47,18 +48,48 @@ private struct HomeContentView: View {
 
     var body: some View {
         NavigationSplitView {
-            List(viewModel.meetings, selection: selectedMeetingBinding) { meeting in
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(meeting.title)
-                        .font(.headline)
-                    Text(meeting.createdAt, style: .date)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+            List(selection: selectedMeetingBinding) {
+                if !viewModel.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    ForEach(viewModel.searchResults) { result in
+                        Button { viewModel.selectSearchResult(result) } label: {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(result.title).font(.headline)
+                                Text(result.text).font(.caption).lineLimit(3)
+                                Text(formatted(seconds: result.startSeconds)).font(.caption.monospaced())
+                            }.frame(maxWidth: .infinity, alignment: .leading)
+                        }.buttonStyle(.plain)
+                    }
+                } else {
+                    ForEach(viewModel.meetings) { meeting in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(meeting.title).font(.headline)
+                            Text(meeting.createdAt, style: .date).font(.caption).foregroundStyle(.secondary)
+                        }.tag(Optional(meeting.id))
+                    }
                 }
-                .tag(Optional(meeting.id))
+                if !viewModel.recoverableRecordingJobs.isEmpty {
+                    Section("Interrupted Recordings") {
+                        ForEach(viewModel.recoverableRecordingJobs) { job in
+                            Button {
+                                Task {
+                                    await recordingVM.restoreInterruptedRecording(jobID: job.id, storageService: storageService)
+                                    if let meetingID = job.meetingID { viewModel.selectedMeetingID = meetingID }
+                                }
+                            } label: {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Recover recording")
+                                    Text(viewModel.meetings.first { $0.id == job.meetingID }?.title ?? "Interrupted meeting")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                            }.disabled(recordingVM.snapshot.state != .idle && recordingVM.snapshot.state != .failed && recordingVM.snapshot.state != .completed)
+                        }
+                    }
+                }
             }
             .overlay {
-                if viewModel.meetings.isEmpty {
+                if !viewModel.searchQuery.isEmpty && viewModel.searchResults.isEmpty {
+                    ContentUnavailableView("No Transcript Matches", systemImage: "magnifyingglass", description: Text("Search generated transcripts, including saved corrections."))
+                } else if viewModel.meetings.isEmpty {
                     ContentUnavailableView {
                         Label("No Recordings Yet", systemImage: "waveform.badge.plus")
                     } description: {
@@ -71,10 +102,14 @@ private struct HomeContentView: View {
                     }
                 }
             }
+            .searchable(text: $viewModel.searchQuery, prompt: "Search transcripts")
+            .task(id: viewModel.searchQuery) { await viewModel.searchTranscripts() }
             .navigationTitle("Recordings")
         } detail: {
             if let meetingID = viewModel.selectedMeetingID {
-                MeetingDetailView(meetingID: meetingID, storageService: storageService, memoryManager: memoryManager)
+                MeetingDetailView(meetingID: meetingID, storageService: storageService, memoryManager: memoryManager,
+                                  requestedSegmentID: viewModel.selectedSearchResult?.meetingID == meetingID ? viewModel.selectedSearchResult?.id : nil,
+                                  requestedSeekSeconds: viewModel.selectedSearchResult?.meetingID == meetingID ? viewModel.selectedSearchResult?.startSeconds : nil)
                     .id(meetingID)
             } else {
                 ContentUnavailableView("Select a Recording", systemImage: "list.bullet.rectangle")
@@ -138,6 +173,7 @@ private struct HomeContentView: View {
                     return
                 }
                 viewModel.selectedMeetingID = newMeetingID
+                viewModel.selectedSearchResult = nil
             }
         )
     }
@@ -334,12 +370,12 @@ final class RecordingToolbarViewModelHolder: ObservableObject {
     private var cachedCoordinatorID: ObjectIdentifier?
     private var cachedViewModel: RecordingControlsViewModel?
 
-    func viewModel(recorderCoordinator: RecorderCoordinator, onRecordingSaved: @escaping (String?) -> Void) -> RecordingControlsViewModel {
+    func viewModel(recorderCoordinator: RecorderCoordinator, settingsStore: SettingsStore?, onRecordingSaved: @escaping (String?) -> Void) -> RecordingControlsViewModel {
         let identifier = ObjectIdentifier(recorderCoordinator)
         if let cachedViewModel, cachedCoordinatorID == identifier {
             return cachedViewModel
         }
-        let created = RecordingControlsViewModel(recorderCoordinator: recorderCoordinator, onRecordingSaved: onRecordingSaved)
+        let created = RecordingControlsViewModel(recorderCoordinator: recorderCoordinator, settingsStore: settingsStore, onRecordingSaved: onRecordingSaved)
         created.captureMicrophone = true
         created.captureSystemAudio = false
         cachedCoordinatorID = identifier

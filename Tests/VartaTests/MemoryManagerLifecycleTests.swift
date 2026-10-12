@@ -38,6 +38,29 @@ final class MemoryManagerLifecycleTests: XCTestCase {
         XCTAssertEqual(batteryMode, .reduced)
     }
 
+    func testCriticalThermalStateCancelsActiveWorkAndReleasesLease() async throws {
+        let manager = MemoryManager()
+        let probe = ConcurrencyProbe()
+        let operation = Task {
+            try await manager.runExclusive(family: .summariser) {
+                await probe.enter()
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+            }
+        }
+        for _ in 0..<250 {
+            if await probe.maximum > 0 { break }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        await manager.handleThermalStateChange(.critical)
+        do {
+            _ = try await operation.value
+            XCTFail("Critical thermal state must cancel active model work")
+        } catch is CancellationError { }
+        await manager.handleThermalStateChange(.nominal)
+        let released = try await manager.runExclusive(family: .whisper) { true }
+        XCTAssertTrue(released)
+    }
+
     func testSameFamilyOperationsAreExclusive() async throws {
         let manager = MemoryManager()
         let probe = ConcurrencyProbe()

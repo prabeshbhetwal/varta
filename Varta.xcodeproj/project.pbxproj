@@ -64,6 +64,23 @@
 		BF13C0000000000000000000 /* CheckpointerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3600000000000000000000 /* CheckpointerTests.swift */; };
 		BF13D0000000000000000000 /* MemoryManagerLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3610000000000000000000 /* MemoryManagerLifecycleTests.swift */; };
 		BF13E0000000000000000000 /* RecordingCrashRecoveryIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3620000000000000000000 /* RecordingCrashRecoveryIntegrationTests.swift */; };
+		BF1400000000000000000000 /* MLXLLM in Frameworks */ = {isa = PBXBuildFile; productRef = PK6100000000000000000000 /* MLXLLM */; };
+		BF1410000000000000000000 /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = PK6110000000000000000000 /* MLXLMCommon */; };
+		BF1420000000000000000000 /* MLX in Frameworks */ = {isa = PBXBuildFile; productRef = PK6120000000000000000000 /* MLX */; };
+		BF1430000000000000000000 /* Transformers in Frameworks */ = {isa = PBXBuildFile; productRef = PK6130000000000000000000 /* Transformers */; };
+		BF1440000000000000000000 /* MLXLLM in Frameworks */ = {isa = PBXBuildFile; productRef = PK6140000000000000000000 /* MLXLLM */; };
+		BF1450000000000000000000 /* MLXLMCommon in Frameworks */ = {isa = PBXBuildFile; productRef = PK6150000000000000000000 /* MLXLMCommon */; };
+		BF1460000000000000000000 /* MLX in Frameworks */ = {isa = PBXBuildFile; productRef = PK6160000000000000000000 /* MLX */; };
+		BF1470000000000000000000 /* LocalModelService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR2C10000000000000000000 /* LocalModelService.swift */; };
+		BF1480000000000000000000 /* MediaProcessingService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR2930000000000000000000 /* MediaProcessingService.swift */; };
+		BF1490000000000000000000 /* CalendarService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3700000000000000000000 /* CalendarService.swift */; };
+		BF14A0000000000000000000 /* CalendarTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3710000000000000000000 /* CalendarTabView.swift */; };
+		BF14B0000000000000000000 /* GeneratedContentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3630000000000000000000 /* GeneratedContentTests.swift */; };
+		BF14C0000000000000000000 /* StorageWorkflowTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3640000000000000000000 /* StorageWorkflowTests.swift */; };
+		BF14D0000000000000000000 /* MediaPipelineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3650000000000000000000 /* MediaPipelineTests.swift */; };
+		BF14E0000000000000000000 /* CalendarDraftTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3660000000000000000000 /* CalendarDraftTests.swift */; };
+		BF14F0000000000000000000 /* RecordingSourceRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3670000000000000000000 /* RecordingSourceRecoveryTests.swift */; };
+		BF1500000000000000000000 /* SummaryRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3680000000000000000000 /* SummaryRecoveryTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -118,6 +135,7 @@
 		FR2D80000000000000000000 /* translation.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = translation.txt; sourceTree = "<group>"; };
 		FR2E00000000000000000000 /* model-manifest.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "model-manifest.json"; sourceTree = "<group>"; };
 		FR2F00000000000000000000 /* whisper-cpp.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = "whisper-cpp.xcframework"; sourceTree = "<group>"; };
+		FR2F10000000000000000000 /* native-engines.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = "native-engines.xcconfig"; sourceTree = "<group>"; };
 		FR3000000000000000000000 /* GlossaryReplacementTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlossaryReplacementTests.swift; sourceTree = "<group>"; };
 		FR3010000000000000000000 /* LanguageTaggingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LanguageTaggingTests.swift; sourceTree = "<group>"; };
 		FR3020000000000000000000 /* TranscriptCorrectionLockingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TranscriptCorrectionLockingTests.swift; sourceTree = "<group>"; };
@@ -137,6 +155,16 @@
 		FR3600000000000000000000 /* CheckpointerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CheckpointerTests.swift; sourceTree = "<group>"; };
 		FR3610000000000000000000 /* MemoryManagerLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MemoryManagerLifecycleTests.swift; sourceTree = "<group>"; };
 		FR3620000000000000000000 /* RecordingCrashRecoveryIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingCrashRecoveryIntegrationTests.swift; sourceTree = "<group>"; };
+		FR2C10000000000000000000 /* LocalModelService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalModelService.swift; sourceTree = "<group>"; };
+		FR2930000000000000000000 /* MediaProcessingService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaProcessingService.swift; sourceTree = "<group>"; };
+		FR3700000000000000000000 /* CalendarService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarService.swift; sourceTree = "<group>"; };
+		FR3710000000000000000000 /* CalendarTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarTabView.swift; sourceTree = "<group>"; };
+		FR3630000000000000000000 /* GeneratedContentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeneratedContentTests.swift; sourceTree = "<group>"; };
+		FR3640000000000000000000 /* StorageWorkflowTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageWorkflowTests.swift; sourceTree = "<group>"; };
+		FR3650000000000000000000 /* MediaPipelineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaPipelineTests.swift; sourceTree = "<group>"; };
+		FR3660000000000000000000 /* CalendarDraftTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalendarDraftTests.swift; sourceTree = "<group>"; };
+		FR3670000000000000000000 /* RecordingSourceRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingSourceRecoveryTests.swift; sourceTree = "<group>"; };
+		FR3680000000000000000000 /* SummaryRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SummaryRecoveryTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -145,6 +173,10 @@
 			buildActionMask = 2147483647;
 			files = (
 				BF10A0000000000000000000 /* GRDB in Frameworks */,
+				BF1400000000000000000000 /* MLXLLM in Frameworks */,
+				BF1410000000000000000000 /* MLXLMCommon in Frameworks */,
+				BF1420000000000000000000 /* MLX in Frameworks */,
+				BF1430000000000000000000 /* Transformers in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -153,6 +185,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				BF10C0000000000000000000 /* GRDB in Frameworks */,
+				BF1440000000000000000000 /* MLXLLM in Frameworks */,
+				BF1450000000000000000000 /* MLXLMCommon in Frameworks */,
+				BF1460000000000000000000 /* MLX in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -225,6 +260,7 @@
 				GR3140000000000000000000 /* Summarisation */,
 				GR3150000000000000000000 /* Translation */,
 				GR3160000000000000000000 /* Memory */,
+				GR31C0000000000000000000 /* Calendar */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -251,6 +287,12 @@
 				FR3600000000000000000000 /* CheckpointerTests.swift */,
 				FR3610000000000000000000 /* MemoryManagerLifecycleTests.swift */,
 				FR3620000000000000000000 /* RecordingCrashRecoveryIntegrationTests.swift */,
+				FR3630000000000000000000 /* GeneratedContentTests.swift */,
+				FR3640000000000000000000 /* StorageWorkflowTests.swift */,
+				FR3650000000000000000000 /* MediaPipelineTests.swift */,
+				FR3660000000000000000000 /* CalendarDraftTests.swift */,
+				FR3670000000000000000000 /* RecordingSourceRecoveryTests.swift */,
+				FR3680000000000000000000 /* SummaryRecoveryTests.swift */,
 			);
 			path = Tests/VartaTests;
 			sourceTree = "<group>";
@@ -292,6 +334,7 @@
 			isa = PBXGroup;
 			children = (
 				FR2F00000000000000000000 /* whisper-cpp.xcframework */,
+				FR2F10000000000000000000 /* native-engines.xcconfig */,
 			);
 			path = Native;
 			sourceTree = "<group>";
@@ -312,6 +355,7 @@
 				GR3100000000000000000000 /* Transcript */,
 				GR3110000000000000000000 /* Translation */,
 				GR3120000000000000000000 /* Outputs */,
+				GR31D0000000000000000000 /* Calendar */,
 			);
 			path = MeetingDetail;
 			sourceTree = "<group>";
@@ -356,6 +400,7 @@
 				FR2900000000000000000000 /* WhisperCppBridge.swift */,
 				FR2910000000000000000000 /* TranscriptionService.swift */,
 				FR2920000000000000000000 /* ImportPipelineService.swift */,
+				FR2930000000000000000000 /* MediaProcessingService.swift */,
 			);
 			path = Transcription;
 			sourceTree = "<group>";
@@ -381,6 +426,7 @@
 			isa = PBXGroup;
 			children = (
 				FR2C00000000000000000000 /* MemoryManager.swift */,
+				FR2C10000000000000000000 /* LocalModelService.swift */,
 			);
 			path = Memory;
 			sourceTree = "<group>";
@@ -441,6 +487,18 @@
 			path = System;
 			sourceTree = "<group>";
 		};
+		GR31C0000000000000000000 /* Calendar */ = {
+			isa = PBXGroup;
+			children = (FR3700000000000000000000 /* CalendarService.swift */);
+			path = Calendar;
+			sourceTree = "<group>";
+		};
+		GR31D0000000000000000000 /* Calendar */ = {
+			isa = PBXGroup;
+			children = (FR3710000000000000000000 /* CalendarTabView.swift */);
+			path = Calendar;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -451,6 +509,7 @@
 				BP4000000000000000000000 /* Frameworks */,
 				BP4010000000000000000000 /* Sources */,
 				BP4020000000000000000000 /* Resources */,
+				BP4060000000000000000000 /* Embed optional whisper */,
 			);
 			buildRules = (
 			);
@@ -459,6 +518,10 @@
 			name = Varta;
 			packageProductDependencies = (
 				PK6010000000000000000000 /* GRDB */,
+				PK6100000000000000000000 /* MLXLLM */,
+				PK6110000000000000000000 /* MLXLMCommon */,
+				PK6120000000000000000000 /* MLX */,
+				PK6130000000000000000000 /* Transformers */,
 			);
 			productName = Varta;
 			productReference = FR2000000000000000000000 /* Varta.app */;
@@ -480,6 +543,9 @@
 			name = VartaTests;
 			packageProductDependencies = (
 				PK6020000000000000000000 /* GRDB */,
+				PK6140000000000000000000 /* MLXLLM */,
+				PK6150000000000000000000 /* MLXLMCommon */,
+				PK6160000000000000000000 /* MLX */,
 			);
 			productName = VartaTests;
 			productReference = FR2010000000000000000000 /* VartaTests.xctest */;
@@ -515,6 +581,9 @@
 			mainGroup = GR3000000000000000000000;
 			packageReferences = (
 				PK6000000000000000000000 /* XCRemoteSwiftPackageReference "GRDB" */,
+				PK6030000000000000000000 /* XCRemoteSwiftPackageReference "mlx-swift-lm" */,
+				PK6040000000000000000000 /* XCRemoteSwiftPackageReference "mlx-swift" */,
+				PK6050000000000000000000 /* XCRemoteSwiftPackageReference "swift-transformers" */,
 			);
 			productRefGroup = GR3010000000000000000000 /* Products */;
 			projectDirPath = "";
@@ -552,6 +621,21 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		BP4060000000000000000000 /* Embed optional whisper */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = ();
+			inputPaths = ("$(SRCROOT)");
+			name = "Embed optional whisper";
+			outputPaths = ("$(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)");
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "set -eu\nconfig=\"${SRCROOT}/.audit/native/whisper.generated.xcconfig\"\nif [ -f \"$config\" ]; then\n  python3 \"${SRCROOT}/Native/prepare-whisper.py\" --prepared-config \"$config\" --embed-directory \"${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}\"\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		BP4010000000000000000000 /* Sources */ = {
@@ -595,6 +679,10 @@
 				BF1370000000000000000000 /* Checkpointer.swift in Sources */,
 				BF1380000000000000000000 /* SystemEventMonitors.swift in Sources */,
 				BF1390000000000000000000 /* SystemRuntimeCoordinator.swift in Sources */,
+				BF1470000000000000000000 /* LocalModelService.swift in Sources */,
+				BF1480000000000000000000 /* MediaProcessingService.swift in Sources */,
+				BF1490000000000000000000 /* CalendarService.swift in Sources */,
+				BF14A0000000000000000000 /* CalendarTabView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -610,6 +698,12 @@
 				BF13C0000000000000000000 /* CheckpointerTests.swift in Sources */,
 				BF13D0000000000000000000 /* MemoryManagerLifecycleTests.swift in Sources */,
 				BF13E0000000000000000000 /* RecordingCrashRecoveryIntegrationTests.swift in Sources */,
+				BF14B0000000000000000000 /* GeneratedContentTests.swift in Sources */,
+				BF14C0000000000000000000 /* StorageWorkflowTests.swift in Sources */,
+				BF14D0000000000000000000 /* MediaPipelineTests.swift in Sources */,
+				BF14E0000000000000000000 /* CalendarDraftTests.swift in Sources */,
+				BF14F0000000000000000000 /* RecordingSourceRecoveryTests.swift in Sources */,
+				BF1500000000000000000000 /* SummaryRecoveryTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -626,6 +720,7 @@
 /* Begin XCBuildConfiguration section */
 		BC7100000000000000000000 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = FR2F10000000000000000000 /* native-engines.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ENABLE_MODULES = YES;
@@ -678,6 +773,7 @@
 		};
 		BC7110000000000000000000 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = FR2F10000000000000000000 /* native-engines.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				CLANG_ENABLE_MODULES = YES;
@@ -873,6 +969,21 @@
 				minimumVersion = 7.0.0;
 			};
 		};
+		PK6030000000000000000000 /* XCRemoteSwiftPackageReference "mlx-swift-lm" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/ml-explore/mlx-swift-lm";
+			requirement = {kind = exactVersion; version = 2.21.2; };
+		};
+		PK6040000000000000000000 /* XCRemoteSwiftPackageReference "mlx-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/ml-explore/mlx-swift";
+			requirement = {kind = exactVersion; version = 0.21.2; };
+		};
+		PK6050000000000000000000 /* XCRemoteSwiftPackageReference "swift-transformers" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/huggingface/swift-transformers";
+			requirement = {kind = exactVersion; version = 0.1.13; };
+		};
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
@@ -886,6 +997,13 @@
 			package = PK6000000000000000000000 /* XCRemoteSwiftPackageReference "GRDB" */;
 			productName = GRDB;
 		};
+		PK6100000000000000000000 /* MLXLLM */ = {isa = XCSwiftPackageProductDependency; package = PK6030000000000000000000; productName = MLXLLM; };
+		PK6110000000000000000000 /* MLXLMCommon */ = {isa = XCSwiftPackageProductDependency; package = PK6030000000000000000000; productName = MLXLMCommon; };
+		PK6120000000000000000000 /* MLX */ = {isa = XCSwiftPackageProductDependency; package = PK6040000000000000000000; productName = MLX; };
+		PK6130000000000000000000 /* Transformers */ = {isa = XCSwiftPackageProductDependency; package = PK6050000000000000000000; productName = Transformers; };
+		PK6140000000000000000000 /* MLXLLM */ = {isa = XCSwiftPackageProductDependency; package = PK6030000000000000000000; productName = MLXLLM; };
+		PK6150000000000000000000 /* MLXLMCommon */ = {isa = XCSwiftPackageProductDependency; package = PK6030000000000000000000; productName = MLXLMCommon; };
+		PK6160000000000000000000 /* MLX */ = {isa = XCSwiftPackageProductDependency; package = PK6040000000000000000000; productName = MLX; };
 /* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = PRJ0000000000000000000001 /* Project object */;

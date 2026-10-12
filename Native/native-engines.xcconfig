@@ -1,0 +1,5 @@
+// Generate the optional include with prepare-whisper.py before opening/building Xcode.
+// Missing artifacts retain the explicit unavailable-engine path.
+FRAMEWORK_SEARCH_PATHS = $(inherited)
+OTHER_LDFLAGS = $(inherited)
+#include? "../.audit/native/whisper.generated.xcconfig"

@@ -38,7 +38,8 @@ final class AppModel: ObservableObject {
         }
         let requested = URL(fileURLWithPath: directory, isDirectory: true)
         let normal = support.appendingPathComponent("Varta", isDirectory: true)
-        let resolved = [requested, normal].map { location -> URL? in
+        let resolved = [requested, normal, requested.appendingPathComponent("varta.sqlite"),
+                        normal.appendingPathComponent("varta.sqlite")].map { location -> URL? in
             var cursor = location.standardizedFileURL
             var missing: [String] = []
             while !fileManager.fileExists(atPath: cursor.path) {
@@ -52,36 +53,73 @@ final class AppModel: ObservableObject {
             return missing.reversed().reduce(cursor.resolvingSymlinksInPath()) { $0.appendingPathComponent($1) }
         }
         guard let isolatedDirectoryURL = resolved[0], let defaultDirectoryURL = resolved[1],
-              !isolatedDirectoryURL.pathComponents.starts(with: defaultDirectoryURL.pathComponents),
-              !defaultDirectoryURL.pathComponents.starts(with: isolatedDirectoryURL.pathComponents) else {
+              let isolatedDatabaseURL = resolved[2], let defaultDatabaseURL = resolved[3],
+              isolatedDatabaseURL != defaultDatabaseURL else {
             launchState = .failed("VARTA_DATA_DIRECTORY must select isolated storage; default storage and unresolved aliases were refused.")
             return
         }
-        if fileManager.fileExists(atPath: isolatedDirectoryURL.path) {
-            let message = "VARTA_DATA_DIRECTORY requires isolated storage without writable file aliases; storage was not opened."
+        let isolatedNames = isolatedDirectoryURL.pathComponents.map { $0.lowercased() }
+        let defaultNames = defaultDirectoryURL.pathComponents.map { $0.lowercased() }
+        let message = "VARTA_DATA_DIRECTORY requires separate storage without writable aliases in either namespace; storage was not opened."
+        guard !isolatedNames.starts(with: defaultNames), !defaultNames.starts(with: isolatedNames) else {
+            launchState = .failed(message)
+            return
+        }
+        func identity(_ attributes: [FileAttributeKey: Any]) -> [UInt64]? {
+            guard let device = attributes[.systemNumber] as? NSNumber,
+                  let file = attributes[.systemFileNumber] as? NSNumber else { return nil }
+            return [device.uint64Value, file.uint64Value]
+        }
+        var contents = [Set<[UInt64]>(), Set<[UInt64]>()]
+        var ancestors = [Set<[UInt64]>(), Set<[UInt64]>()]
+        for (index, directory) in [isolatedDirectoryURL, defaultDirectoryURL].enumerated() {
+            var cursor = directory
+            while true {
+                if fileManager.fileExists(atPath: cursor.path) {
+                    guard let attributes = try? fileManager.attributesOfItem(atPath: cursor.path),
+                          let file = identity(attributes) else {
+                        launchState = .failed(message)
+                        return
+                    }
+                    ancestors[index].insert(file)
+                }
+                let parent = cursor.deletingLastPathComponent()
+                if parent.path == cursor.path { break }
+                cursor = parent
+            }
+            guard fileManager.fileExists(atPath: directory.path) else { continue }
             var traversalFailed = false
-            guard let root = try? fileManager.attributesOfItem(atPath: isolatedDirectoryURL.path),
+            guard let root = try? fileManager.attributesOfItem(atPath: directory.path),
                   root[.type] as? FileAttributeType == .typeDirectory,
-                  let entries = fileManager.enumerator(at: isolatedDirectoryURL, includingPropertiesForKeys: nil,
+                  let rootIdentity = identity(root),
+                  let entries = fileManager.enumerator(at: directory, includingPropertiesForKeys: nil,
                     errorHandler: { _, _ in traversalFailed = true; return false }) else {
                 launchState = .failed(message)
                 return
             }
+            contents[index].insert(rootIdentity)
             while let entry = entries.nextObject() {
                 guard let location = entry as? URL,
                       let attributes = try? fileManager.attributesOfItem(atPath: location.path),
                       let type = attributes[.type] as? FileAttributeType,
+                      let file = identity(attributes),
                       type == .typeDirectory || (type == .typeRegular && (attributes[.referenceCount] as? NSNumber)?.intValue == 1) else {
                     launchState = .failed(message)
                     return
                 }
+                contents[index].insert(file)
             }
             guard !traversalFailed else {
                 launchState = .failed(message)
                 return
             }
         }
-        let isolatedDatabaseURL = isolatedDirectoryURL.appendingPathComponent("varta.sqlite")
+        guard contents[0].isDisjoint(with: contents[1]),
+              contents[0].isDisjoint(with: ancestors[1]),
+              contents[1].isDisjoint(with: ancestors[0]) else {
+            launchState = .failed(message)
+            return
+        }
         #endif
         systemRuntimeCoordinator?.stop()
 

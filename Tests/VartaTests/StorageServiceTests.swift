@@ -1,5 +1,6 @@
 import GRDB
 import XCTest
+import Darwin
 @testable import Varta
 
 final class StorageServiceTests: XCTestCase {
@@ -101,6 +102,131 @@ final class StorageServiceTests: XCTestCase {
         XCTAssertNil(AppModel().storageService)
     }
 
+    #if VARTA_REQUIRE_ISOLATED_DATA
+    @MainActor
+    func testIsolatedBuildRejectsUnsafeDirectoryBeforeStorage() async throws {
+        guard ProcessInfo.processInfo.environment["VARTA_TESTING"] == "1" else {
+            XCTFail("Test scheme must isolate app startup")
+            return
+        }
+        let previous = ProcessInfo.processInfo.environment["VARTA_DATA_DIRECTORY"]
+        let before = defaultStorageMetadata()
+        let support = try XCTUnwrap(FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first)
+        let defaultDirectory = support.appendingPathComponent("Varta", isDirectory: true)
+        let fixture = URL(fileURLWithPath: NSTemporaryDirectory()).resolvingSymlinksInPath()
+            .appendingPathComponent("varta-isolation-alias-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: fixture, withIntermediateDirectories: true)
+        let directoryAlias = fixture.appendingPathComponent("default-directory", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: directoryAlias, withDestinationURL: defaultDirectory)
+        let fileAliasDirectory = fixture.appendingPathComponent("database-alias", isDirectory: true)
+        try FileManager.default.createDirectory(at: fileAliasDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: fileAliasDirectory.appendingPathComponent("varta.sqlite"),
+            withDestinationURL: defaultDirectory.appendingPathComponent("varta.sqlite"))
+        defer {
+            if let previous { setenv("VARTA_DATA_DIRECTORY", previous, 1) }
+            else { unsetenv("VARTA_DATA_DIRECTORY") }
+        }
+        for directory in [nil, "", " \n\t ", "relative-data", defaultDirectory.path, directoryAlias.path, fileAliasDirectory.path] as [String?] {
+            if let directory { setenv("VARTA_DATA_DIRECTORY", directory, 1) }
+            else { unsetenv("VARTA_DATA_DIRECTORY") }
+            let model = AppModel()
+            await model.bootstrap()
+            XCTAssertNil(model.storageService)
+            XCTAssertNil(model.settingsStore)
+            XCTAssertNil(model.recorderCoordinator)
+            XCTAssertNil(model.systemRuntimeCoordinator)
+            guard case .failed(let message) = model.launchState else {
+                XCTFail("Missing isolation must fail startup")
+                continue
+            }
+            XCTAssertTrue(message.contains("VARTA_DATA_DIRECTORY"))
+            XCTAssertEqual(defaultStorageMetadata(), before)
+        }
+    }
+
+    @MainActor
+    func testIsolatedBuildOpensExplicitDirectoryWithoutDefaultStorage() async throws {
+        guard ProcessInfo.processInfo.environment["VARTA_TESTING"] == "1" else {
+            XCTFail("Test scheme must isolate app startup")
+            return
+        }
+        let previous = ProcessInfo.processInfo.environment["VARTA_DATA_DIRECTORY"]
+        let before = defaultStorageMetadata()
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory()).resolvingSymlinksInPath()
+            .appendingPathComponent("varta-isolated-bootstrap-\(UUID().uuidString)", isDirectory: true)
+        setenv("VARTA_DATA_DIRECTORY", directory.path, 1)
+        let model = AppModel()
+        defer {
+            model.systemRuntimeCoordinator?.stop()
+            if let previous { setenv("VARTA_DATA_DIRECTORY", previous, 1) }
+            else { unsetenv("VARTA_DATA_DIRECTORY") }
+        }
+        await model.bootstrap()
+        guard case .ready = model.launchState else {
+            XCTFail("Explicit isolated storage must initialise")
+            return
+        }
+        let storage = try XCTUnwrap(model.storageService)
+        let files = await storage.appSupportDirectory()
+        XCTAssertEqual(files, directory.appendingPathComponent("varta.files"))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: directory.appendingPathComponent("varta.sqlite").path))
+        XCTAssertEqual(defaultStorageMetadata(), before)
+    }
+
+    @MainActor
+    func testIsolatedBuildRejectsHardLinkedDefaultDatabase() async throws {
+        guard ProcessInfo.processInfo.environment["VARTA_TESTING"] == "1" else {
+            XCTFail("Test scheme must isolate app startup")
+            return
+        }
+        let previous = ProcessInfo.processInfo.environment["VARTA_DATA_DIRECTORY"]
+        defer {
+            if let previous { setenv("VARTA_DATA_DIRECTORY", previous, 1) }
+            else { unsetenv("VARTA_DATA_DIRECTORY") }
+        }
+        let fixture = URL(fileURLWithPath: NSTemporaryDirectory()).resolvingSymlinksInPath()
+            .appendingPathComponent("varta-isolation-hard-link-\(UUID().uuidString)", isDirectory: true)
+        let support = fixture.appendingPathComponent("synthetic-support", isDirectory: true)
+        let normalDirectory = support.appendingPathComponent("Varta", isDirectory: true)
+        let aliasDirectory = fixture.appendingPathComponent("alias", isDirectory: true)
+        for directory in [normalDirectory, aliasDirectory] {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        }
+        let normalDatabase = normalDirectory.appendingPathComponent("varta.sqlite")
+        let marker = Data("Synthetic database marker; must not be opened".utf8)
+        try marker.write(to: normalDatabase)
+        try FileManager.default.linkItem(at: normalDatabase, to: aliasDirectory.appendingPathComponent("varta.sqlite"))
+        let before = try FileManager.default.attributesOfItem(atPath: normalDatabase.path)
+        setenv("VARTA_DATA_DIRECTORY", aliasDirectory.path, 1)
+        let fileManager = IsolationFileManager(support: support)
+        let model = AppModel()
+
+        await model.bootstrap(fileManager: fileManager)
+
+        XCTAssertNil(model.storageService)
+        guard case .failed(let message) = model.launchState else {
+            XCTFail("Hard-linked default storage must fail startup")
+            return
+        }
+        XCTAssertTrue(message.contains("VARTA_DATA_DIRECTORY"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: aliasDirectory.appendingPathComponent("varta.files").path))
+        XCTAssertEqual(try Data(contentsOf: normalDatabase), marker)
+        let after = try FileManager.default.attributesOfItem(atPath: normalDatabase.path)
+        XCTAssertEqual(after[.size] as? NSNumber, before[.size] as? NSNumber)
+        XCTAssertEqual(after[.modificationDate] as? Date, before[.modificationDate] as? Date)
+    }
+
+    private func defaultStorageMetadata() -> [[String: String]] {
+        guard let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return [] }
+        let database = support.appendingPathComponent("Varta/varta.sqlite").path
+        return ["", "-wal", "-shm"].map { suffix in
+            guard let attributes = try? FileManager.default.attributesOfItem(atPath: database + suffix) else { return [:] }
+            return ["size": String(describing: attributes[.size] ?? ""),
+                    "modified": String((attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)]
+        }
+    }
+    #endif
+
     func testDeleteArchivesAudioInsteadOfRemovingIt() async throws {
         let storage = try StorageService(databaseURL: temporaryDatabaseURL())
         let meetingID = try await storage.createMeeting(title: "Synthetic archive", languageMode: .english)
@@ -135,3 +261,19 @@ final class StorageServiceTests: XCTestCase {
         XCTAssertEqual(meetings.count, 1)
     }
 }
+
+#if VARTA_REQUIRE_ISOLATED_DATA
+private final class IsolationFileManager: FileManager, @unchecked Sendable {
+    let support: URL
+
+    init(support: URL) {
+        self.support = support
+        super.init()
+    }
+
+    override func urls(for directory: FileManager.SearchPathDirectory, in domainMask: FileManager.SearchPathDomainMask) -> [URL] {
+        if directory == .applicationSupportDirectory, domainMask == .userDomainMask { return [support] }
+        return super.urls(for: directory, in: domainMask)
+    }
+}
+#endif

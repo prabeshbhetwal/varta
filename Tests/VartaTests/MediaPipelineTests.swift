@@ -293,6 +293,55 @@ final class MediaPipelineTests: XCTestCase {
         XCTAssertEqual(roundedEnd[0].endSeconds, 6, accuracy: 0.000_1)
     }
 
+    func testInvalidDecodedCropReportsTimingWithoutTranscriptText() throws {
+        let span = VoiceActivitySpan(startFrame: 3_040, endFrame: 278_560)
+        XCTAssertThrowsError(try WhisperDecodingPolicy.mapDecodedSegments([
+            WhisperTranscribedSegment(startSeconds: 0, endSeconds: 17.5, text: "Private transcript content")
+        ], within: span)) { error in
+            let message = error.localizedDescription
+            XCTAssertTrue(message.contains("17.220"))
+            XCTAssertTrue(message.contains("0.000"))
+            XCTAssertTrue(message.contains("17.500"))
+            XCTAssertFalse(message.contains("Private transcript content"))
+        }
+    }
+
+    func testEmptyDecodedCropReportsMissingSegments() throws {
+        let span = VoiceActivitySpan(startFrame: 3_040, endFrame: 278_560)
+        XCTAssertThrowsError(try WhisperDecodingPolicy.mapDecodedSegments([], within: span)) { error in
+            XCTAssertTrue(error.localizedDescription.contains("no transcript segments"))
+            XCTAssertTrue(error.localizedDescription.contains("17.220"))
+        }
+    }
+
+    func testNativePaddedTerminalEndpointUsesOriginalPartialWindow() throws {
+        let span = VoiceActivitySpan(startFrame: 3_040, endFrame: 278_560)
+        let native = WhisperTranscribedSegment(startSeconds: 0, endSeconds: 30, text: "Keep budget unapproved")
+        let normalized = WhisperDecodingPolicy.normalizePaddedNativeEndpoint(native, isTerminal: true, within: span)
+        XCTAssertEqual(normalized.startSeconds, 0)
+        XCTAssertEqual(normalized.endSeconds, 17.22, accuracy: 0.000_1)
+        XCTAssertEqual(normalized.text, "Keep budget unapproved")
+        let mapped = try WhisperDecodingPolicy.mapDecodedSegments([normalized], within: span)
+        XCTAssertEqual(60 + mapped[0].startSeconds, 60.19, accuracy: 0.000_1)
+        XCTAssertEqual(60 + mapped[0].endSeconds, 77.41, accuracy: 0.000_1)
+    }
+
+    func testNativePaddingCorrectionRetainsInvalidRangeRejection() throws {
+        let span = VoiceActivitySpan(startFrame: 3_040, endFrame: 278_560)
+        let invalid: [(Double, Double, String, Bool)] = [
+            (0, 30, "Nonterminal", false), (17.22, 30, "Outside start", true),
+            (-0.01, 30, "Negative start", true), (.nan, 30, "Invalid start", true),
+            (0, 17.5, "Unrecognised overrun", true), (0, 30.01, "Beyond decoder context", true),
+            (2, 1, "Reversed", true), (0, .nan, "Invalid end", true), (0, 30, " \n", true)
+        ]
+        for (start, end, text, terminal) in invalid {
+            let normalized = WhisperDecodingPolicy.normalizePaddedNativeEndpoint(
+                WhisperTranscribedSegment(startSeconds: start, endSeconds: end, text: text),
+                isTerminal: terminal, within: span)
+            XCTAssertThrowsError(try WhisperDecodingPolicy.mapDecodedSegments([normalized], within: span))
+        }
+    }
+
     func testQuietWindowsCompleteWithoutWhisperAndPreservePriorContent() async throws {
         let storage = try makeStorage()
         let meeting = try await storage.createMeeting(title: "Quiet detector fixture", languageMode: .english)

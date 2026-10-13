@@ -15,6 +15,16 @@ struct WhisperTranscribedSegment: Sendable {
 }
 
 enum WhisperDecodingPolicy {
+    static func normalizePaddedNativeEndpoint(_ segment: WhisperTranscribedSegment, isTerminal: Bool,
+                                              within span: VoiceActivitySpan) -> WhisperTranscribedSegment {
+        let duration = Double(span.endFrame - span.startFrame) / 16_000
+        // Pinned decoder residual text can end at its padded 30-second context on shorter input.
+        guard isTerminal, duration > 0, duration < 30, segment.endSeconds == 30,
+              segment.startSeconds.isFinite, segment.startSeconds >= 0, segment.startSeconds < duration,
+              !segment.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return segment }
+        return WhisperTranscribedSegment(startSeconds: segment.startSeconds, endSeconds: duration, text: segment.text)
+    }
+
     static func validateSpeechSpans(_ spans: [VoiceActivitySpan], frameCount: Int64) throws {
         guard frameCount > 0, frameCount <= 480_000, !spans.isEmpty, spans.count <= 128 else {
             throw LocalModelError.invalidOutput("Whisper requires validated speech spans within a thirty-second audio window.")
@@ -31,12 +41,17 @@ enum WhisperDecodingPolicy {
     static func mapDecodedSegments(_ segments: [WhisperTranscribedSegment], within span: VoiceActivitySpan) throws -> [WhisperTranscribedSegment] {
         let offset = Double(span.startFrame) / 16_000
         let duration = Double(span.endFrame - span.startFrame) / 16_000
-        guard !segments.isEmpty, segments.allSatisfy({
-            $0.startSeconds.isFinite && $0.endSeconds.isFinite && $0.startSeconds >= 0 &&
-            $0.startSeconds < duration &&
-            $0.endSeconds > $0.startSeconds && $0.endSeconds <= duration + 0.05 &&
-            !($0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-        }) else { throw LocalModelError.invalidOutput("Detected speech returned an empty or invalid transcript.") }
+        guard !segments.isEmpty else {
+            throw LocalModelError.invalidOutput("Detected speech returned no transcript segments (crop \(String(format: "%.3f", duration)) seconds).")
+        }
+        for (index, segment) in segments.enumerated() {
+            let blankText = segment.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            guard segment.startSeconds.isFinite && segment.endSeconds.isFinite && segment.startSeconds >= 0 &&
+                  segment.startSeconds < duration && segment.endSeconds > segment.startSeconds &&
+                  segment.endSeconds <= duration + 0.05 && !blankText else {
+                throw LocalModelError.invalidOutput("Detected speech returned an invalid transcript segment \(index + 1) of \(segments.count): start \(String(format: "%.3f", segment.startSeconds)), end \(String(format: "%.3f", segment.endSeconds)), crop \(String(format: "%.3f", duration)) seconds, blank text \(blankText).")
+            }
+        }
         return segments.map {
             WhisperTranscribedSegment(startSeconds: offset + $0.startSeconds,
                 endSeconds: offset + min($0.endSeconds, duration), text: $0.text)
@@ -196,15 +211,41 @@ struct WhisperCppBridge: WhisperCppClient {
                 try Task.checkCancellation()
                 guard status == 0 else { throw LocalModelError.inferenceFailed("Whisper returned status \(status).") }
                 var cropSegments: [WhisperTranscribedSegment] = []
-                for index in 0..<whisper_full_n_segments(context) {
-                    guard let textPointer = whisper_full_get_segment_text(context, index) else { continue }
+                let nativeCount = whisper_full_n_segments(context)
+                var nilTextCount = 0
+                var blankTextCount = 0
+                var nativeRanges: [String] = []
+                for index in 0..<nativeCount {
+                    let start = whisper_full_get_segment_t0(context, index)
+                    let end = whisper_full_get_segment_t1(context, index)
+                    if index < 8 { nativeRanges.append("\(start):\(end)") }
+                    guard let textPointer = whisper_full_get_segment_text(context, index) else {
+                        nilTextCount += 1
+                        continue
+                    }
                     let text = String(cString: textPointer).trimmingCharacters(in: .whitespacesAndNewlines)
-                    let start = Double(whisper_full_get_segment_t0(context, index)) / 100
-                    let end = Double(whisper_full_get_segment_t1(context, index)) / 100
-                    guard !text.isEmpty else { continue }
-                    cropSegments.append(WhisperTranscribedSegment(startSeconds: start, endSeconds: end, text: text))
+                    guard !text.isEmpty else {
+                        blankTextCount += 1
+                        continue
+                    }
+                    let native = WhisperTranscribedSegment(startSeconds: Double(start) / 100,
+                        endSeconds: Double(end) / 100, text: text)
+                    let normalized = WhisperDecodingPolicy.normalizePaddedNativeEndpoint(native,
+                        isTerminal: index == nativeCount - 1, within: span)
+                    if normalized.endSeconds != native.endSeconds {
+                        let diagnostic = "Whisper padded terminal endpoint: raw centiseconds \(start):\(end), crop frames \(span.startFrame)..<\(span.endFrame), bounded end \(String(format: "%.3f", normalized.endSeconds)) seconds.\n"
+                        try? FileHandle.standardError.write(contentsOf: Data(diagnostic.utf8))
+                    }
+                    cropSegments.append(normalized)
                 }
-                let mapped = try WhisperDecodingPolicy.mapDecodedSegments(cropSegments, within: span)
+                let mapped: [WhisperTranscribedSegment]
+                do {
+                    mapped = try WhisperDecodingPolicy.mapDecodedSegments(cropSegments, within: span)
+                } catch {
+                    let diagnostic = "Whisper crop rejected: window frames \(audio.length), crop frames \(span.startFrame)..<\(span.endFrame), native segments \(nativeCount), collected \(cropSegments.count), nil text \(nilTextCount), blank text \(blankTextCount), raw centiseconds [\(nativeRanges.joined(separator: ","))]. \(error.localizedDescription)\n"
+                    try? FileHandle.standardError.write(contentsOf: Data(diagnostic.utf8))
+                    throw error
+                }
                 segments.append(contentsOf: mapped)
                 decodingPrompt = WhisperDecodingPolicy.boundedContext(decodingPrompt + " " + mapped.map(\.text).joined(separator: " "))
             }

@@ -65,12 +65,14 @@ final class GeneratedContentTests: XCTestCase {
     func testFinalSummaryAndEmailUseOriginalEvidenceDespiteLossyIntermediateSummaries() async throws {
         let storage = try await makeStorage()
         let meeting = try await storage.createMeeting(title: "Original evidence", languageMode: .english)
-        let text = "Maya will review next week with Ravi. We have not promised to install a projector."
+        let text = "We decided to keep the blue theme and navigation layout unchanged. Maya will review the checklist with Ravi before the demonstration. The checklist must include keyboard navigation, visible focus indicators and readable text contrast. We have not promised to install a projector."
         try await storage.replaceTranscriptSegments(meetingID: meeting, segments: [
             NewTranscriptSegment(startSeconds: 0, endSeconds: 10, text: text, languageTag: "en", speakerLabel: nil)
         ])
-        let client = ContentFixture()
-        _ = try await SummariserService(storageService: storage, memoryManager: MemoryManager(), client: client).summariseMeeting(meetingID: meeting)
+        let misclassified = "Decisions\n- Keep the blue theme and navigation layout unchanged.\n- Review the checklist with Ravi before the demonstration.\n- The checklist must include keyboard navigation, visible focus indicators and readable text contrast."
+        let client = ContentFixture(calendarResponse: "[]", decisionsResponse: misclassified)
+        let outputs = try await SummariserService(storageService: storage, memoryManager: MemoryManager(), client: client).summariseMeeting(meetingID: meeting)
+        XCTAssertEqual(outputs.outputs.first { $0.type == .decisions }?.content, misclassified)
         let contexts = await client.finalContexts
         XCTAssertEqual(contexts.count, 1)
         XCTAssertTrue(contexts[0]["transcript"]?.contains(text) == true)
@@ -78,6 +80,7 @@ final class GeneratedContentTests: XCTestCase {
         let emailContexts = await client.emailContexts
         XCTAssertEqual(emailContexts, contexts)
         XCTAssertNil(emailContexts.first?["extracted_outputs"])
+        XCTAssertFalse(emailContexts.contains { $0.values.contains(misclassified) })
     }
 
     func testFinalEvidenceBudgetCountsJSONEscapesAndRetainsLongHierarchy() throws {
@@ -461,11 +464,13 @@ private actor ContentFixture: LocalLanguageModelClient {
     private let invalidFinal: Bool
     private let dateHint: String
     private let calendarResponse: String?
+    private let decisionsResponse: String?
     private let onFinal: (@Sendable () async throws -> Void)?
-    init(invalidFinal: Bool = false, dateHint: String = "next week", calendarResponse: String? = nil, onFinal: (@Sendable () async throws -> Void)? = nil) {
+    init(invalidFinal: Bool = false, dateHint: String = "next week", calendarResponse: String? = nil, decisionsResponse: String? = nil, onFinal: (@Sendable () async throws -> Void)? = nil) {
         self.invalidFinal = invalidFinal
         self.dateHint = dateHint
         self.calendarResponse = calendarResponse
+        self.decisionsResponse = decisionsResponse
         self.onFinal = onFinal
     }
     func generate(instruction: String, context: [String: String]) async throws -> String {
@@ -476,6 +481,7 @@ private actor ContentFixture: LocalLanguageModelClient {
             return String(decoding: try JSONEncoder().encode([CalendarCandidate(title: "Review", dateHint: dateHint,
                 durationMinutes: nil, reason: "Explicit follow up", sourceQuote: "review next week")]), as: UTF8.self)
         }
+        if prompt.hasPrefix("decisions"), let decisionsResponse { return decisionsResponse }
         if prompt.hasPrefix("final-summary") {
             finalContexts.append(context)
             try await onFinal?()

@@ -84,7 +84,7 @@ enum PromptTemplateService {
     static func instruction(for template: PromptTemplate, appSupportDirectoryURL: URL) throws -> String {
         let instruction = try loadPrompt(for: template, appSupportDirectoryURL: appSupportDirectoryURL)
         var contract = ""
-        if [.windowSummary, .sectionSynthesis, .finalSummary, .actionItems, .decisions, .calendarCandidates].contains(template) {
+        if [.windowSummary, .sectionSynthesis, .finalSummary, .actionItems, .decisions, .followUpEmail, .calendarCandidates].contains(template) {
             let bundled = bundledPromptContent(for: template, bundle: .main)
             guard !bundled.isEmpty else {
                 throw LocalModelError.missingAsset("Required response contract for \(template.filename)")

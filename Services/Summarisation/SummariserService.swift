@@ -152,8 +152,7 @@ actor SummariserService {
         var outputs = types.map { type, _ in
             GeneratedOutput(type: type, language: .english, content: (checkpoint.extracted[type] ?? []).joined(separator: "\n\n"))
         }
-        let emailContext = try await boundedSynthesis(outputs.map(\.content), prompts: prompts)
-        outputs.append(GeneratedOutput(type: .followUpEmail, language: .english, content: try await run(.followUpEmail, context: ["summary": summary.concise, "extracted_outputs": emailContext], prompts: prompts)))
+        outputs.append(GeneratedOutput(type: .followUpEmail, language: .english, content: try await run(.followUpEmail, context: finalContext, prompts: prompts)))
         outputs.append(GeneratedOutput(type: .calendarCandidates, language: .english, content: String(decoding: try JSONEncoder().encode(checkpoint.candidates), as: UTF8.self)))
         outputs += [
             GeneratedOutput(type: .summaryConcise, language: .english, content: summary.concise),

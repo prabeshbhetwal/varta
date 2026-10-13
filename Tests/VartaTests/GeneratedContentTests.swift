@@ -62,7 +62,7 @@ final class GeneratedContentTests: XCTestCase {
             context: ["transcript": String(repeating: "\"", count: 80_000)]))
     }
 
-    func testFinalSummaryUsesOriginalEvidenceDespiteLossyIntermediateSummaries() async throws {
+    func testFinalSummaryAndEmailUseOriginalEvidenceDespiteLossyIntermediateSummaries() async throws {
         let storage = try await makeStorage()
         let meeting = try await storage.createMeeting(title: "Original evidence", languageMode: .english)
         let text = "Maya will review next week with Ravi. We have not promised to install a projector."
@@ -75,6 +75,9 @@ final class GeneratedContentTests: XCTestCase {
         XCTAssertEqual(contexts.count, 1)
         XCTAssertTrue(contexts[0]["transcript"]?.contains(text) == true)
         XCTAssertNil(contexts[0]["section_summaries"])
+        let emailContexts = await client.emailContexts
+        XCTAssertEqual(emailContexts, contexts)
+        XCTAssertNil(emailContexts.first?["extracted_outputs"])
     }
 
     func testFinalEvidenceBudgetCountsJSONEscapesAndRetainsLongHierarchy() throws {
@@ -302,7 +305,7 @@ final class GeneratedContentTests: XCTestCase {
         }
 
         let snapshot = try PromptTemplateService.snapshot(appSupportDirectoryURL: root)
-        let required: [PromptTemplate] = [.windowSummary, .sectionSynthesis, .finalSummary, .actionItems, .decisions, .calendarCandidates]
+        let required: [PromptTemplate] = [.windowSummary, .sectionSynthesis, .finalSummary, .actionItems, .decisions, .followUpEmail, .calendarCandidates]
         let marker = "Mandatory response and evidence rules (override earlier conflicting instructions):"
         for template in PromptTemplate.allCases {
             let installed = try XCTUnwrap(previous[template])
@@ -453,6 +456,7 @@ final class GeneratedContentTests: XCTestCase {
 private actor ContentFixture: LocalLanguageModelClient {
     var prompts: [String] = []
     var finalContexts: [[String: String]] = []
+    var emailContexts: [[String: String]] = []
     var unloaded = false
     private let invalidFinal: Bool
     private let dateHint: String
@@ -478,6 +482,7 @@ private actor ContentFixture: LocalLanguageModelClient {
             if invalidFinal { return "malformed" }
             return "{\"concise\":\"Fixture recap\",\"detailed\":\"Fixture detail\",\"bullets\":\"- Fixture point\"}"
         }
+        if prompt.hasPrefix("follow-up-email") { emailContexts.append(context) }
         return "Model fixture response \(prompts.count)"
     }
     func unload() async { unloaded = true }

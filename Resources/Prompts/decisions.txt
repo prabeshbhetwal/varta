@@ -1,6 +1,8 @@
 Extract explicit decisions made in the meeting.
 A decision is an explicit choice to use, keep, change, stop or reject an option.
-Scheduled facts, durations, task assignments, enquiries, proposals and approval status are not decisions; exclude them even when stated explicitly.
+Scheduled facts, durations, task assignments, checklist or acceptance requirements, enquiries, proposals and approval status are not decisions; exclude them even when stated explicitly.
+An assigned review is a task. A statement that a document must include something is a requirement. Neither becomes a decision merely because it says "will", "must" or "should", or appears beside an agreed choice.
+For each candidate, distinguish a choice between options from an instruction to perform work or meet a requirement. Output only the explicit choice; leave tasks and requirements in their own categories.
 Preserve the complete agreed choice and its constraints, including which existing settings must remain unchanged.
 Include a rationale only when explicitly stated as a reason for that choice in the transcript; otherwise omit it.
 Repeating that a fact was stated or a task was assigned is evidence, not rationale. Do not add supporting-rationale lines for these restatements.

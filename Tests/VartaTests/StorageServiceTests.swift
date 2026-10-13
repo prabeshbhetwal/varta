@@ -168,7 +168,7 @@ final class StorageServiceTests: XCTestCase {
         }
         let storage = try XCTUnwrap(model.storageService)
         let files = await storage.appSupportDirectory()
-        XCTAssertEqual(files, directory.appendingPathComponent("varta.files"))
+        XCTAssertEqual(files.path, directory.appendingPathComponent("varta.files").path)
         XCTAssertTrue(FileManager.default.fileExists(atPath: directory.appendingPathComponent("varta.sqlite").path))
         XCTAssertEqual(defaultStorageMetadata(), before)
     }

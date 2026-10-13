@@ -51,28 +51,44 @@ final class GeneratedContentTests: XCTestCase {
     func testBundledSummaryAndDecisionContractsPreserveInstalledInstructions() async throws {
         let storage = try await makeStorage()
         let root = await storage.appSupportDirectory()
-        let finalURL = root.appendingPathComponent("Prompts/final-summary.txt")
-        let decisionsURL = root.appendingPathComponent("Prompts/decisions.txt")
         let previousFinal = "Keep my summary wording. Return JSON with string keys concise, detailed and bullets."
         let previousDecisions = "Keep my decisions wording. Include supporting rationale when present."
-        try previousFinal.write(to: finalURL, atomically: true, encoding: .utf8)
-        try previousDecisions.write(to: decisionsURL, atomically: true, encoding: .utf8)
+        let previous = Dictionary(uniqueKeysWithValues: PromptTemplate.allCases.map { template in
+            (template, template == .finalSummary ? previousFinal
+                : template == .decisions ? previousDecisions : "Keep my \(template.rawValue) wording.")
+        })
+        for (template, instruction) in previous {
+            try instruction.write(to: root.appendingPathComponent("Prompts/\(template.filename)"), atomically: true, encoding: .utf8)
+        }
 
         let snapshot = try PromptTemplateService.snapshot(appSupportDirectoryURL: root)
+        let required: [PromptTemplate] = [.windowSummary, .sectionSynthesis, .finalSummary, .actionItems, .decisions, .calendarCandidates]
+        let marker = "Mandatory response and evidence rules (override earlier conflicting instructions):"
+        for template in PromptTemplate.allCases {
+            let installed = try XCTUnwrap(previous[template])
+            let instruction = try XCTUnwrap(snapshot[template])
+            XCTAssertTrue(instruction.hasPrefix(installed))
+            XCTAssertEqual(try String(contentsOf: root.appendingPathComponent("Prompts/\(template.filename)"), encoding: .utf8), installed)
+            if required.contains(template) {
+                let resource = try XCTUnwrap(Bundle.main.url(forResource: template.rawValue, withExtension: "txt", subdirectory: "Prompts")
+                    ?? Bundle.main.url(forResource: template.rawValue, withExtension: "txt"))
+                XCTAssertTrue(instruction.hasSuffix(try String(contentsOf: resource, encoding: .utf8)))
+                let position = try XCTUnwrap(instruction.range(of: marker))
+                XCTAssertGreaterThan(instruction.distance(from: instruction.startIndex, to: position.lowerBound), installed.count)
+            } else {
+                XCTAssertEqual(instruction, installed)
+            }
+        }
 
         let final = try XCTUnwrap(snapshot[.finalSummary])
-        XCTAssertTrue(final.hasPrefix(previousFinal))
         let example = try XCTUnwrap(final.components(separatedBy: .newlines).first { $0.hasPrefix("{") })
         let summary = try JSONDecoder().decode(SummaryContent.self, from: Data(example.utf8))
         XCTAssertFalse(summary.concise.isEmpty)
         XCTAssertFalse(summary.detailed.isEmpty)
         XCTAssertTrue(summary.bullets.contains("\n"))
         let decisions = try XCTUnwrap(snapshot[.decisions])
-        XCTAssertTrue(decisions.hasPrefix(previousDecisions))
         XCTAssertTrue(decisions.contains("only when explicitly stated"))
         XCTAssertTrue(decisions.contains("Never infer"))
-        XCTAssertEqual(try String(contentsOf: finalURL, encoding: .utf8), previousFinal)
-        XCTAssertEqual(try String(contentsOf: decisionsURL, encoding: .utf8), previousDecisions)
     }
 
     func testMalformedFinalOutputPreservesPreviousSummary() async throws {

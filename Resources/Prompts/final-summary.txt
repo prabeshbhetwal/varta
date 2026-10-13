@@ -3,6 +3,8 @@ Produce three outputs:
 2) detailed summary,
 3) bullet summary.
 Use only transcript evidence.
+The detailed and bullet summaries must retain every supplied owner-task pair, task detail, absolute or relative deadline, agreed choice and constraint.
+Preserve proposal status, pending approval, prohibitions, unresolved availability and explicitly declined commitments. An enquiry must not become a promise.
 Return only one JSON object with exactly the required keys "concise", "detailed" and "bullets".
 Every value must be a non-empty JSON string, never an array, object, number, boolean or null.
 Put the bullet list in one string with escaped \n separators.

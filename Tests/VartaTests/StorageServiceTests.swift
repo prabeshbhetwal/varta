@@ -216,6 +216,69 @@ final class StorageServiceTests: XCTestCase {
         XCTAssertEqual(after[.modificationDate] as? Date, before[.modificationDate] as? Date)
     }
 
+    @MainActor
+    func testIsolatedBuildRejectsWritableCompanionAndSidecarAliases() async throws {
+        guard ProcessInfo.processInfo.environment["VARTA_TESTING"] == "1" else {
+            XCTFail("Test scheme must isolate app startup")
+            return
+        }
+        let previous = ProcessInfo.processInfo.environment["VARTA_DATA_DIRECTORY"]
+        defer {
+            if let previous { setenv("VARTA_DATA_DIRECTORY", previous, 1) }
+            else { unsetenv("VARTA_DATA_DIRECTORY") }
+        }
+        let fixture = URL(fileURLWithPath: NSTemporaryDirectory()).resolvingSymlinksInPath()
+            .appendingPathComponent("varta-isolation-writable-alias-\(UUID().uuidString)", isDirectory: true)
+        let support = fixture.appendingPathComponent("synthetic-support", isDirectory: true)
+        let normalDirectory = support.appendingPathComponent("Varta", isDirectory: true)
+        try FileManager.default.createDirectory(at: normalDirectory, withIntermediateDirectories: true)
+        let markerURL = normalDirectory.appendingPathComponent("synthetic-state.txt")
+        let marker = Data("Synthetic default state; must remain unchanged".utf8)
+        try marker.write(to: markerURL)
+        let fileManager = IsolationFileManager(support: support)
+        for index in 0..<4 {
+            let directory = fixture.appendingPathComponent("case-\(index)", isDirectory: true)
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let files = directory.appendingPathComponent("varta.files", isDirectory: true)
+            switch index {
+            case 0:
+                try FileManager.default.createSymbolicLink(at: files, withDestinationURL: normalDirectory)
+            case 1:
+                try FileManager.default.createDirectory(at: files, withIntermediateDirectories: true)
+                try FileManager.default.createSymbolicLink(at: files.appendingPathComponent("Prompts"), withDestinationURL: normalDirectory)
+            case 2:
+                try FileManager.default.createSymbolicLink(at: directory.appendingPathComponent("varta.sqlite-wal"), withDestinationURL: markerURL)
+            default:
+                try FileManager.default.linkItem(at: markerURL, to: directory.appendingPathComponent("varta.sqlite-shm"))
+            }
+            let before = try FileManager.default.attributesOfItem(atPath: markerURL.path)
+            let directoryBefore = try FileManager.default.attributesOfItem(atPath: normalDirectory.path)
+            let children = try FileManager.default.contentsOfDirectory(atPath: normalDirectory.path).sorted()
+            setenv("VARTA_DATA_DIRECTORY", directory.path, 1)
+            let model = AppModel()
+
+            await model.bootstrap(fileManager: fileManager)
+
+            XCTAssertNil(model.storageService)
+            XCTAssertNil(model.settingsStore)
+            XCTAssertNil(model.recorderCoordinator)
+            XCTAssertNil(model.systemRuntimeCoordinator)
+            guard case .failed(let message) = model.launchState else {
+                XCTFail("Writable alias case \(index) must fail before storage")
+                continue
+            }
+            XCTAssertTrue(message.contains("VARTA_DATA_DIRECTORY"))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: directory.appendingPathComponent("varta.sqlite").path))
+            XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: normalDirectory.path).sorted(), children)
+            XCTAssertEqual(try Data(contentsOf: markerURL), marker)
+            let after = try FileManager.default.attributesOfItem(atPath: markerURL.path)
+            XCTAssertEqual(after[.size] as? NSNumber, before[.size] as? NSNumber)
+            XCTAssertEqual(after[.modificationDate] as? Date, before[.modificationDate] as? Date)
+            let directoryAfter = try FileManager.default.attributesOfItem(atPath: normalDirectory.path)
+            XCTAssertEqual(directoryAfter[.modificationDate] as? Date, directoryBefore[.modificationDate] as? Date)
+        }
+    }
+
     private func defaultStorageMetadata() -> [[String: String]] {
         guard let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return [] }
         let database = support.appendingPathComponent("Varta/varta.sqlite").path

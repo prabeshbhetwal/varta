@@ -36,8 +36,8 @@ final class AppModel: ObservableObject {
             launchState = .failed("Verification build requires an absolute VARTA_DATA_DIRECTORY; storage was not opened.")
             return
         }
-        let requested = URL(fileURLWithPath: directory, isDirectory: true).appendingPathComponent("varta.sqlite")
-        let normal = support.appendingPathComponent("Varta/varta.sqlite")
+        let requested = URL(fileURLWithPath: directory, isDirectory: true)
+        let normal = support.appendingPathComponent("Varta", isDirectory: true)
         let resolved = [requested, normal].map { location -> URL? in
             var cursor = location.standardizedFileURL
             var missing: [String] = []
@@ -51,24 +51,37 @@ final class AppModel: ObservableObject {
             }
             return missing.reversed().reduce(cursor.resolvingSymlinksInPath()) { $0.appendingPathComponent($1) }
         }
-        guard let isolatedDatabaseURL = resolved[0], let defaultDatabaseURL = resolved[1],
-              isolatedDatabaseURL != defaultDatabaseURL else {
+        guard let isolatedDirectoryURL = resolved[0], let defaultDirectoryURL = resolved[1],
+              !isolatedDirectoryURL.pathComponents.starts(with: defaultDirectoryURL.pathComponents),
+              !defaultDirectoryURL.pathComponents.starts(with: isolatedDirectoryURL.pathComponents) else {
             launchState = .failed("VARTA_DATA_DIRECTORY must select isolated storage; default storage and unresolved aliases were refused.")
             return
         }
-        if fileManager.fileExists(atPath: isolatedDatabaseURL.path),
-           fileManager.fileExists(atPath: defaultDatabaseURL.path) {
-            guard let isolated = try? fileManager.attributesOfItem(atPath: isolatedDatabaseURL.path),
-                  let normal = try? fileManager.attributesOfItem(atPath: defaultDatabaseURL.path),
-                  let isolatedFile = isolated[.systemFileNumber] as? NSNumber,
-                  let normalFile = normal[.systemFileNumber] as? NSNumber,
-                  let isolatedDevice = isolated[.systemNumber] as? NSNumber,
-                  let normalDevice = normal[.systemNumber] as? NSNumber,
-                  isolatedFile != normalFile || isolatedDevice != normalDevice else {
-                launchState = .failed("VARTA_DATA_DIRECTORY must select isolated storage; default database aliases were refused.")
+        if fileManager.fileExists(atPath: isolatedDirectoryURL.path) {
+            let message = "VARTA_DATA_DIRECTORY requires isolated storage without writable file aliases; storage was not opened."
+            var traversalFailed = false
+            guard let root = try? fileManager.attributesOfItem(atPath: isolatedDirectoryURL.path),
+                  root[.type] as? FileAttributeType == .typeDirectory,
+                  let entries = fileManager.enumerator(at: isolatedDirectoryURL, includingPropertiesForKeys: nil,
+                    errorHandler: { _, _ in traversalFailed = true; return false }) else {
+                launchState = .failed(message)
+                return
+            }
+            while let entry = entries.nextObject() {
+                guard let location = entry as? URL,
+                      let attributes = try? fileManager.attributesOfItem(atPath: location.path),
+                      let type = attributes[.type] as? FileAttributeType,
+                      type == .typeDirectory || (type == .typeRegular && (attributes[.referenceCount] as? NSNumber)?.intValue == 1) else {
+                    launchState = .failed(message)
+                    return
+                }
+            }
+            guard !traversalFailed else {
+                launchState = .failed(message)
                 return
             }
         }
+        let isolatedDatabaseURL = isolatedDirectoryURL.appendingPathComponent("varta.sqlite")
         #endif
         systemRuntimeCoordinator?.stop()
 

@@ -1,2 +1,5 @@
 Extract explicit decisions made in the meeting.
 Include supporting rationale when present.
+Include a rationale only when explicitly stated in the transcript; otherwise omit it.
+Never infer a likely reason, preference, brand standard or standard duration.
+Extract agreed decisions, not proposals, assigned tasks or scheduled facts.

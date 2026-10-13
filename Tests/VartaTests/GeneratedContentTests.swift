@@ -26,7 +26,7 @@ final class GeneratedContentTests: XCTestCase {
 
     func testFinalSummaryDiagnosticsReportSchemaWithoutPrivateText() throws {
         let cases: [(String, String, String)] = [
-            ("{\"concise\":\"Private sentinel\",\"detailed\":\"Private sentinel\",\"bullets\":[\"Private sentinel\"]}", "typeMismatch", "bullets=array"),
+            ("{\"concise\":\"Private sentinel\",\"detailed\":\"Private sentinel\",\"bullets\":[\"Private sentinel\",\"Private sentinel\",\"Private sentinel\",\"Private sentinel\",\"Private sentinel\",\"Private sentinel\",\"Private sentinel\",\"Private sentinel\"]}", "typeMismatch", "bullets=array"),
             ("{\"concise\":17,\"detailed\":\"Private sentinel\",\"bullets\":\"Private sentinel\"}", "typeMismatch", "concise=number/bool"),
             ("{\"concise\":\"Private sentinel\",\"detailed\":null,\"bullets\":\"Private sentinel\"}", "valueNotFound", "detailed=null"),
             ("{\"Private sentinel\":\"Private sentinel\",\"detailed\":\"Private sentinel\",\"bullets\":\"Private sentinel\"}", "keyNotFound", "concise=missing"),
@@ -46,6 +46,33 @@ final class GeneratedContentTests: XCTestCase {
                 XCTAssertLessThan(diagnostic.utf8.count, 512)
             }
         }
+    }
+
+    func testBundledSummaryAndDecisionContractsPreserveInstalledInstructions() async throws {
+        let storage = try await makeStorage()
+        let root = await storage.appSupportDirectory()
+        let finalURL = root.appendingPathComponent("Prompts/final-summary.txt")
+        let decisionsURL = root.appendingPathComponent("Prompts/decisions.txt")
+        let previousFinal = "Keep my summary wording. Return JSON with string keys concise, detailed and bullets."
+        let previousDecisions = "Keep my decisions wording. Include supporting rationale when present."
+        try previousFinal.write(to: finalURL, atomically: true, encoding: .utf8)
+        try previousDecisions.write(to: decisionsURL, atomically: true, encoding: .utf8)
+
+        let snapshot = try PromptTemplateService.snapshot(appSupportDirectoryURL: root)
+
+        let final = try XCTUnwrap(snapshot[.finalSummary])
+        XCTAssertTrue(final.hasPrefix(previousFinal))
+        let example = try XCTUnwrap(final.components(separatedBy: .newlines).first { $0.hasPrefix("{") })
+        let summary = try JSONDecoder().decode(SummaryContent.self, from: Data(example.utf8))
+        XCTAssertFalse(summary.concise.isEmpty)
+        XCTAssertFalse(summary.detailed.isEmpty)
+        XCTAssertTrue(summary.bullets.contains("\n"))
+        let decisions = try XCTUnwrap(snapshot[.decisions])
+        XCTAssertTrue(decisions.hasPrefix(previousDecisions))
+        XCTAssertTrue(decisions.contains("only when explicitly stated"))
+        XCTAssertTrue(decisions.contains("Never infer"))
+        XCTAssertEqual(try String(contentsOf: finalURL, encoding: .utf8), previousFinal)
+        XCTAssertEqual(try String(contentsOf: decisionsURL, encoding: .utf8), previousDecisions)
     }
 
     func testMalformedFinalOutputPreservesPreviousSummary() async throws {

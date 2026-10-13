@@ -81,7 +81,7 @@ enum PromptTemplateService {
         return instruction + "\n\n" + String(decoding: data, as: UTF8.self)
     }
 
-    private static func instruction(for template: PromptTemplate, appSupportDirectoryURL: URL) throws -> String {
+    static func instruction(for template: PromptTemplate, appSupportDirectoryURL: URL) throws -> String {
         let instruction = try loadPrompt(for: template, appSupportDirectoryURL: appSupportDirectoryURL)
         var contract = ""
         if [.windowSummary, .sectionSynthesis, .finalSummary, .actionItems, .decisions, .calendarCandidates].contains(template) {

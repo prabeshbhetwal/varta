@@ -71,10 +71,10 @@ actor TranslationService {
             if end < text.endIndex, let boundary = text[start..<end].lastIndex(where: \.isWhitespace) {
                 end = text.index(after: boundary)
             }
-            let prompt = try PromptTemplateService.render(.translation, context: [
+            let instruction = try PromptTemplateService.instruction(for: .translation, appSupportDirectoryURL: root)
+            let result = try await client.generate(instruction: instruction, context: [
                 "target_language": "ne", "source_language": "en", "text": String(text[start..<end])
-            ], appSupportDirectoryURL: root)
-            let result = try await client.generate(prompt: prompt).trimmingCharacters(in: .whitespacesAndNewlines)
+            ]).trimmingCharacters(in: .whitespacesAndNewlines)
             guard !result.isEmpty else { throw LocalModelError.invalidOutput("Translation returned empty text.") }
             parts.append(result)
             start = end

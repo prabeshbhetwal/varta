@@ -242,7 +242,8 @@ private actor RecoveryModelFixture: LocalLanguageModelClient {
         self.onWindow = onWindow
     }
 
-    func generate(prompt: String) async throws -> String {
+    func generate(instruction: String, context: [String: String]) async throws -> String {
+        let prompt = instruction + "\n\n" + String(decoding: try JSONEncoder().encode(context), as: UTF8.self)
         if prompt.hasPrefix("window-summary") {
             windowCalls += 1
             windowPrompts.append(prompt)

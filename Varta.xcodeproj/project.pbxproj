@@ -83,6 +83,7 @@
 		BF1500000000000000000000 /* SummaryRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3680000000000000000000 /* SummaryRecoveryTests.swift */; };
 		BF1510000000000000000000 /* VoiceActivityService.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR2940000000000000000000 /* VoiceActivityService.swift */; };
 		BF1520000000000000000000 /* VoiceActivityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FR3690000000000000000000 /* VoiceActivityTests.swift */; };
+		BF1530000000000000000000 /* AVKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FR3720000000000000000000 /* AVKit.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -170,6 +171,7 @@
 		FR3680000000000000000000 /* SummaryRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SummaryRecoveryTests.swift; sourceTree = "<group>"; };
 		FR2940000000000000000000 /* VoiceActivityService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceActivityService.swift; sourceTree = "<group>"; };
 		FR3690000000000000000000 /* VoiceActivityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceActivityTests.swift; sourceTree = "<group>"; };
+		FR3720000000000000000000 /* AVKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVKit.framework; path = System/Library/Frameworks/AVKit.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -182,6 +184,7 @@
 				BF1410000000000000000000 /* MLXLMCommon in Frameworks */,
 				BF1420000000000000000000 /* MLX in Frameworks */,
 				BF1430000000000000000000 /* Transformers in Frameworks */,
+				BF1530000000000000000000 /* AVKit.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -211,6 +214,7 @@
 				GR30C0000000000000000000 /* Native */,
 				GR3080000000000000000000 /* Varta */,
 				GR3010000000000000000000 /* Products */,
+				FR3720000000000000000000 /* AVKit.framework */,
 			);
 			sourceTree = "<group>";
 		};

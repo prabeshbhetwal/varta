@@ -105,7 +105,9 @@ actor SummariserService {
             checkpoint.sections.append(try await run(.sectionSynthesis, context: ["window_summaries": text], prompts: prompts))
             try await persist(checkpoint, jobID: jobID, windowCount: windows.count)
         }
-        let raw = try await run(.finalSummary, context: ["section_summaries": try await boundedSynthesis(checkpoint.sections, prompts: prompts)], prompts: prompts)
+        let finalContext = try Self.finalSummaryContext(windows: windows,
+            sectionSynthesis: try await boundedSynthesis(checkpoint.sections, prompts: prompts))
+        let raw = try await run(.finalSummary, context: finalContext, prompts: prompts)
         let data = try Self.jsonData(raw)
         let summary: SummaryContent
         do {
@@ -180,7 +182,8 @@ actor SummariserService {
             guard let instruction = prompts[template] else { throw LocalModelError.missingAsset("Prompt: \(template.filename)") }
             return instruction
         }
-        let data = try JSONEncoder().encode([meetingDate] + windows + instructions)
+        // Bind cached stages to message roles, original-evidence context and date validation.
+        let data = try JSONEncoder().encode(["source-evidence-v2", meetingDate] + windows + instructions)
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
@@ -188,7 +191,7 @@ actor SummariserService {
         var current = values
         for _ in 0..<5 {
             let combined = current.joined(separator: "\n\n")
-            if combined.utf8.count <= 60_000 { return combined }
+            if try JSONEncoder().encode(["section_summaries": combined]).count <= 60_000 { return combined }
             var reduced: [String] = []
             for index in stride(from: 0, to: current.count, by: 3) {
                 reduced.append(try await run(.sectionSynthesis, context: [
@@ -202,10 +205,22 @@ actor SummariserService {
 
     private func run(_ template: PromptTemplate, context: [String: String], prompts: [PromptTemplate: String]) async throws -> String {
         try Task.checkCancellation()
-        let response = try await client.generate(prompt: PromptTemplateService.render(template, context: context, snapshot: prompts))
+        guard let instruction = prompts[template] else { throw LocalModelError.missingAsset("Prompt: \(template.filename)") }
+        let response = try await client.generate(instruction: instruction, context: context)
         let text = response.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { throw LocalModelError.invalidOutput("Empty response for \(template.rawValue).") }
         return text
+    }
+
+    nonisolated static func finalSummaryContext(windows: [String], sectionSynthesis: String) throws -> [String: String] {
+        let original = ["transcript": windows.joined(separator: "\n\n")]
+        if try JSONEncoder().encode(original).count <= 60_000 { return original }
+        // shortcut: original context limited to 60 KB; verify an evidence ledger before long-meeting fidelity acceptance.
+        let fallback = ["section_summaries": sectionSynthesis]
+        guard try JSONEncoder().encode(fallback).count <= 60_000 else {
+            throw LocalModelError.invalidOutput("Final summary evidence exceeds the bounded synthesis context.")
+        }
+        return fallback
     }
 
     private nonisolated static func windows(segments: [TranscriptSegment], glossary: [GlossaryTerm]) throws -> [String] {

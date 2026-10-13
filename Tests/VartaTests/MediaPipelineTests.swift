@@ -3,6 +3,10 @@ import XCTest
 @testable import Varta
 
 final class MediaPipelineTests: XCTestCase {
+    func testPlaybackViewFrameworkIsLoadedByApp() {
+        XCTAssertNotNil(NSClassFromString("AVPlayerView"))
+    }
+
     func testMixedSourcesAndSequentialChunksShareOneTimeline() async throws {
         let storage = try makeStorage()
         let meeting = try await storage.createMeeting(title: "Mixed fixture", languageMode: .english)

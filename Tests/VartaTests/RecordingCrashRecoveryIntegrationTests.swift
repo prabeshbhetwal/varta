@@ -200,17 +200,25 @@ final class RecordingCrashRecoveryIntegrationTests: XCTestCase {
             checkpointer: checkpointer, memoryManager: MemoryManager())
         try await recorder.restoreInterruptedRecording(jobID: job.id)
         let root = await storage.appSupportDirectory()
-        let sources: [(RecorderCoordinator.AudioSource, Int)] = [(.microphone, 4_800), (.system, 2_400)]
+        let sources: [(RecorderCoordinator.AudioSource, Int)] = [(.microphone, 48_000), (.system, 24_000)]
         for (source, frames) in sources {
             let output = root.appendingPathComponent("Recordings/\(meeting)/segment-0-\(source.rawValue)-\(job.id).m4a")
             try FileManager.default.createDirectory(at: output.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let preflightURL = output.deletingLastPathComponent().appendingPathComponent("preflight-\(source.rawValue).m4a")
+            let preflight = RecordingWriter()
+            try preflight.startWriting(to: preflightURL)
+            try preflight.append(sampleBuffer: makePCMBuffer(sample: 0.25, frames: frames))
+            let preflightResult = try await preflight.finishSegment()
+            XCTAssertGreaterThan(preflightResult.durationSeconds, 0.05)
+            let size = try XCTUnwrap(FileManager.default.attributesOfItem(atPath: preflightURL.path)[.size] as? NSNumber)
+            XCTAssertGreaterThan(size.intValue, 1_024)
             let writer = RecordingWriter()
             try writer.startWriting(to: output)
-            try writer.append(sampleBuffer: makePCMBuffer(sample: 0, frames: frames))
+            try writer.append(sampleBuffer: makePCMBuffer(sample: 0.25, frames: frames))
             try await recorder.finalise([source: writer], segmentIndex: 0)
             let snapshot = await recorder.currentSnapshot()
             XCTAssertTrue(snapshot.totalRecordedSeconds.isFinite)
-            XCTAssertEqual(snapshot.totalRecordedSeconds, 0.1, accuracy: 0.001)
+            XCTAssertEqual(snapshot.totalRecordedSeconds, 1, accuracy: 0.001)
         }
         let records = try await storage.importedMedia(for: meeting)
         XCTAssertEqual(records.count, 2)
@@ -218,7 +226,7 @@ final class RecordingCrashRecoveryIntegrationTests: XCTestCase {
         await recorder.stopRecording()
         let checkpoint = try await checkpointer.latestRecordingCheckpoint(jobID: job.id)
         XCTAssertEqual(checkpoint?.segmentRelativePaths.count, 2)
-        XCTAssertEqual(try XCTUnwrap(checkpoint?.totalRecordedSeconds), 0.1, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(checkpoint?.totalRecordedSeconds), 1, accuracy: 0.001)
         let savedJob = try await storage.job(id: job.id)
         XCTAssertEqual(savedJob?.status, .completed)
         let completion = await recorder.takeCompletedRecording()
@@ -254,7 +262,7 @@ final class RecordingCrashRecoveryIntegrationTests: XCTestCase {
             customBlockSource: nil, offsetToData: 0, dataLength: frames * 4,
             flags: 0, blockBufferOut: &block), noErr)
         let dataBlock = try XCTUnwrap(block)
-        let samples = Array(repeating: sample, count: frames)
+        let samples = (0..<frames).map { sample * Float(sin(2 * .pi * 440 * Double($0) / 48_000)) }
         try samples.withUnsafeBytes { bytes in
             XCTAssertEqual(CMBlockBufferReplaceDataBytes(with: try XCTUnwrap(bytes.baseAddress), blockBuffer: dataBlock,
                 offsetIntoDestination: 0, dataLength: bytes.count), noErr)

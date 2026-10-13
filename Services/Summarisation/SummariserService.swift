@@ -9,6 +9,7 @@ actor SummariserService {
         var extracted: [GeneratedOutputType: [String]] = [:]
         var candidates: [CalendarCandidate] = []
         var sections: [String] = []
+        var failedFinalResponse: String?
     }
 
     private let storageService: StorageService
@@ -105,7 +106,18 @@ actor SummariserService {
             try await persist(checkpoint, jobID: jobID, windowCount: windows.count)
         }
         let raw = try await run(.finalSummary, context: ["section_summaries": try await boundedSynthesis(checkpoint.sections, prompts: prompts)], prompts: prompts)
-        let summary = try JSONDecoder().decode(SummaryContent.self, from: Self.jsonData(raw))
+        let data = try Self.jsonData(raw)
+        let summary: SummaryContent
+        do {
+            summary = try JSONDecoder().decode(SummaryContent.self, from: data)
+        } catch let error as DecodingError {
+            // Keep failed response privately in the bounded checkpoint; log shape only.
+            checkpoint.failedFinalResponse = raw
+            try await persist(checkpoint, jobID: jobID, windowCount: windows.count)
+            let diagnostic = Self.finalSummaryDecodingDiagnostic(error, data: data) + "\n"
+            try? FileHandle.standardError.write(contentsOf: Data(diagnostic.utf8))
+            throw error
+        }
         guard [summary.concise, summary.detailed, summary.bullets].allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
             throw LocalModelError.invalidOutput("Final summary requires concise, detailed and bullet text.")
         }
@@ -212,6 +224,41 @@ actor SummariserService {
             }.joined(separator: "\n")
             return text.isEmpty ? nil : text
         }
+    }
+
+    nonisolated static func finalSummaryDecodingDiagnostic(_ error: DecodingError, data: Data) -> String {
+        let kind: String
+        let expected: String
+        let path: [any CodingKey]
+        switch error {
+        case .typeMismatch(let type, let context):
+            kind = "typeMismatch"; expected = String(describing: type); path = context.codingPath
+        case .valueNotFound(let type, let context):
+            kind = "valueNotFound"; expected = String(describing: type); path = context.codingPath
+        case .keyNotFound(let key, let context):
+            kind = "keyNotFound"; expected = "required field"; path = context.codingPath + [key]
+        case .dataCorrupted(let context):
+            kind = "dataCorrupted"; expected = "valid JSON"; path = context.codingPath
+        @unknown default:
+            kind = "unknown"; expected = "summary object"; path = []
+        }
+        let fields = ["concise", "detailed", "bullets"]
+        let safePath = path.prefix(8).map { key in
+            key.intValue.map(String.init) ?? (fields.contains(key.stringValue) ? key.stringValue : "<unknown>")
+        }.joined(separator: ".")
+        func shape(_ value: Any?) -> String {
+            guard let value else { return "missing" }
+            if value is NSNull { return "null" }
+            if value is String { return "string" }
+            if value is [Any] { return "array" }
+            if value is [String: Any] { return "object" }
+            if value is NSNumber { return "number/bool" }
+            return "unknown"
+        }
+        let root = try? JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed)
+        let object = root as? [String: Any]
+        let types = fields.map { "\($0)=\(shape(object?[$0]))" }.joined(separator: ", ")
+        return "Final summary rejected: \(kind), expected \(expected.prefix(64)), path \(safePath.isEmpty ? "root" : safePath), bytes \(data.count), root \(root == nil ? "invalid JSON" : shape(root)); \(types)."
     }
 
     nonisolated static func jsonData(_ text: String) throws -> Data {

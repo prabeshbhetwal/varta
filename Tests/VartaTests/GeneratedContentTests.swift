@@ -24,6 +24,30 @@ final class GeneratedContentTests: XCTestCase {
         XCTAssertTrue(unloaded)
     }
 
+    func testFinalSummaryDiagnosticsReportSchemaWithoutPrivateText() throws {
+        let cases: [(String, String, String)] = [
+            ("{\"concise\":\"Private sentinel\",\"detailed\":\"Private sentinel\",\"bullets\":[\"Private sentinel\"]}", "typeMismatch", "bullets=array"),
+            ("{\"concise\":17,\"detailed\":\"Private sentinel\",\"bullets\":\"Private sentinel\"}", "typeMismatch", "concise=number/bool"),
+            ("{\"concise\":\"Private sentinel\",\"detailed\":null,\"bullets\":\"Private sentinel\"}", "valueNotFound", "detailed=null"),
+            ("{\"Private sentinel\":\"Private sentinel\",\"detailed\":\"Private sentinel\",\"bullets\":\"Private sentinel\"}", "keyNotFound", "concise=missing"),
+            ("[\"Private sentinel\"]", "typeMismatch", "root array"),
+            ("Private sentinel {", "dataCorrupted", "root invalid JSON")
+        ]
+        for (raw, kind, shape) in cases {
+            let data = Data(raw.utf8)
+            do {
+                _ = try JSONDecoder().decode(SummaryContent.self, from: data)
+                XCTFail("Invalid summary must retain strict decoding")
+            } catch let error as DecodingError {
+                let diagnostic = SummariserService.finalSummaryDecodingDiagnostic(error, data: data)
+                XCTAssertTrue(diagnostic.contains(kind))
+                XCTAssertTrue(diagnostic.contains(shape))
+                XCTAssertFalse(diagnostic.contains("Private sentinel"))
+                XCTAssertLessThan(diagnostic.utf8.count, 512)
+            }
+        }
+    }
+
     func testMalformedFinalOutputPreservesPreviousSummary() async throws {
         let storage = try await makeStorage()
         let meeting = try await seedTranscript(storage)
@@ -39,6 +63,24 @@ final class GeneratedContentTests: XCTestCase {
         XCTAssertTrue(outputs.isEmpty)
         let unloaded = await client.unloaded
         XCTAssertTrue(unloaded)
+        let failed = try await storage.jobs(statuses: [.failed], type: .summarisation)
+        let job = try XCTUnwrap(failed.first { $0.meetingID == meeting })
+        let state = try await storage.processingState(jobID: job.id, stage: "summary")
+        let blob = try XCTUnwrap(state?.checkpointBlob)
+        let checkpoint = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(blob.utf8)) as? [String: Any])
+        XCTAssertEqual(checkpoint["failedFinalResponse"] as? String, "malformed")
+        XCTAssertEqual((checkpoint["summaries"] as? [String])?.count, 1)
+        XCTAssertEqual((checkpoint["sections"] as? [String])?.count, 1)
+
+        let retry = ContentFixture()
+        let recovered = try await SummariserService(storageService: storage, memoryManager: MemoryManager(), client: retry).summariseMeeting(meetingID: meeting)
+        XCTAssertEqual(recovered.summary.concise, "Fixture recap")
+        let retryPrompts = await retry.prompts
+        XCTAssertEqual(retryPrompts.count, 2)
+        XCTAssertTrue(retryPrompts[0].hasPrefix("final-summary"))
+        XCTAssertTrue(retryPrompts[1].hasPrefix("follow-up-email"))
+        let completed = try await storage.jobs(statuses: [.completed], type: .summarisation)
+        XCTAssertEqual(completed.filter { $0.meetingID == meeting }.map(\.id), [job.id])
     }
 
     func testCorrectionDuringGenerationRejectsStaleContent() async throws {

@@ -102,7 +102,11 @@ final class GeneratedContentTests: XCTestCase {
         let meeting = try await seedTranscript(storage)
         _ = try await SummariserService(storageService: storage, memoryManager: MemoryManager(), client: ContentFixture()).summariseMeeting(meetingID: meeting)
         let before = try await storage.generatedOutputs(meetingID: meeting)
-        let invalid = ContentFixture(dateHint: "Soon")
+        let raw = String(decoding: try JSONEncoder().encode([
+            CalendarCandidate(title: "Review", dateHint: "next week", durationMinutes: nil, reason: "Explicit", sourceQuote: "review next week"),
+            CalendarCandidate(title: "Review", dateHint: "Private sentinel timing", durationMinutes: nil, reason: "Explicit", sourceQuote: "review next week")
+        ]), as: UTF8.self)
+        let invalid = ContentFixture(calendarResponse: raw)
         do {
             _ = try await SummariserService(storageService: storage, memoryManager: MemoryManager(), client: invalid).summariseMeeting(meetingID: meeting)
             XCTFail("Unsupported timing must reject generation")
@@ -115,8 +119,95 @@ final class GeneratedContentTests: XCTestCase {
         let blob = try XCTUnwrap(state?.checkpointBlob)
         let checkpoint = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(blob.utf8)) as? [String: Any])
         XCTAssertEqual((checkpoint["summaries"] as? [String])?.count, 0)
+        let rejected = try XCTUnwrap(checkpoint["failedCalendarResponse"] as? String)
+        let candidates = try JSONDecoder().decode([CalendarCandidate].self, from: Data(rejected.utf8))
+        XCTAssertEqual(rejected, raw)
+        XCTAssertEqual(candidates.last?.dateHint, "Private sentinel timing")
+        XCTAssertEqual(checkpoint["failedCalendarWindowIndex"] as? Int, 0)
+        XCTAssertEqual(checkpoint["failedCalendarCandidateIndex"] as? Int, 1)
+        XCTAssertEqual((checkpoint["candidates"] as? [Any])?.count, 0)
         let unloaded = await invalid.unloaded
         XCTAssertTrue(unloaded)
+    }
+
+    func testMalformedCalendarResponseIsRetainedWithoutCompletingWindow() async throws {
+        let storage = try await makeStorage()
+        let meeting = try await seedTranscript(storage)
+        let raw = "{\"Private sentinel\":\"private malformed calendar\"}"
+        do {
+            _ = try await SummariserService(storageService: storage, memoryManager: MemoryManager(),
+                client: ContentFixture(calendarResponse: raw)).summariseMeeting(meetingID: meeting)
+            XCTFail("Object must not decode as calendar array")
+        } catch is DecodingError { }
+        let jobs = try await storage.jobs(statuses: [.failed], type: .summarisation)
+        let job = try XCTUnwrap(jobs.first { $0.meetingID == meeting })
+        let state = try await storage.processingState(jobID: job.id, stage: "summary")
+        let blob = try XCTUnwrap(state?.checkpointBlob)
+        let checkpoint = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(blob.utf8)) as? [String: Any])
+        XCTAssertEqual(checkpoint["failedCalendarResponse"] as? String, raw)
+        XCTAssertEqual(checkpoint["failedCalendarWindowIndex"] as? Int, 0)
+        XCTAssertNil(checkpoint["failedCalendarCandidateIndex"])
+        XCTAssertEqual((checkpoint["summaries"] as? [String])?.count, 0)
+        let outputs = try await storage.generatedOutputs(meetingID: meeting)
+        XCTAssertTrue(outputs.isEmpty)
+    }
+
+    func testOversizedCalendarDiagnosticPreservesOriginalErrorAndBoundedCheckpoint() async throws {
+        let storage = try await makeStorage()
+        let meeting = try await seedTranscript(storage)
+        _ = try await SummariserService(storageService: storage, memoryManager: MemoryManager(), client: ContentFixture()).summariseMeeting(meetingID: meeting)
+        let before = try await storage.generatedOutputs(meetingID: meeting)
+        do {
+            _ = try await SummariserService(storageService: storage, memoryManager: MemoryManager(),
+                client: ContentFixture(dateHint: "Private unsupported timing")).summariseMeeting(meetingID: meeting)
+        } catch LocalModelError.invalidOutput { }
+        let failed = try await storage.jobs(statuses: [.failed], type: .summarisation)
+        let previousJob = try XCTUnwrap(failed.first { $0.meetingID == meeting })
+        let previousState = try await storage.processingState(jobID: previousJob.id, stage: "summary")
+        let previousBlob = try XCTUnwrap(previousState?.checkpointBlob)
+        let previous = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(previousBlob.utf8)) as? [String: Any])
+        let raw = String(decoding: try JSONEncoder().encode([CalendarCandidate(title: "Review", dateHint: "Private unsupported timing",
+            durationMinutes: nil, reason: String(repeating: "\"", count: 4_100_000), sourceQuote: "review next week")]), as: UTF8.self)
+        XCTAssertLessThan(raw.utf8.count, 16_000_000)
+        let client = ContentFixture(calendarResponse: raw)
+        do {
+            _ = try await SummariserService(storageService: storage, memoryManager: MemoryManager(), client: client).summariseMeeting(meetingID: meeting)
+            XCTFail("Oversized invalid date must fail")
+        } catch LocalModelError.invalidOutput(let message) {
+            XCTAssertEqual(message, "Calendar date hint lacks quoted evidence.")
+        }
+        let jobs = try await storage.jobs(statuses: [.failed], type: .summarisation)
+        let job = try XCTUnwrap(jobs.first { $0.meetingID == meeting })
+        XCTAssertEqual(job.id, previousJob.id)
+        XCTAssertEqual(job.progress, 0)
+        let state = try await storage.processingState(jobID: job.id, stage: "summary")
+        let blob = try XCTUnwrap(state?.checkpointBlob)
+        XCTAssertLessThanOrEqual(blob.utf8.count, 16_000_000)
+        let checkpoint = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(blob.utf8)) as? [String: Any])
+        // Recovery re-encodes the checkpoint before inference; compare retained values.
+        XCTAssertEqual(checkpoint as NSDictionary, previous as NSDictionary)
+        XCTAssertEqual((checkpoint["summaries"] as? [String])?.count, 0)
+        let after = try await storage.generatedOutputs(meetingID: meeting)
+        XCTAssertEqual(after, before)
+        let unloaded = await client.unloaded
+        XCTAssertTrue(unloaded)
+    }
+
+    func testCalendarDiagnosticUsesOnlyAllowlistedMetadata() {
+        let errors: [Error] = [
+            LocalModelError.invalidOutput("Calendar date hint lacks quoted evidence."),
+            LocalModelError.invalidOutput("Calendar candidate lacks a quote from its source transcript."),
+            LocalModelError.invalidOutput("Private sentinel error"),
+            DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "Private sentinel decoder text"))
+        ]
+        for (error, field) in zip(errors, ["date_hint", "source_quote", "candidate", "json"]) {
+            let diagnostic = SummariserService.calendarResponseDiagnostic(error, windowIndex: 2,
+                candidateIndex: 1, responseBytes: 345, checkpointWriteFailed: true)
+            XCTAssertTrue(diagnostic.contains("window=2, candidate=1, field=\(field), bytes=345"))
+            XCTAssertTrue(diagnostic.contains("checkpoint_write_error=1"))
+            XCTAssertFalse(diagnostic.contains("Private sentinel"))
+            XCTAssertLessThan(diagnostic.utf8.count, 256)
+        }
     }
 
     func testUnsupportedDateCheckpointCannotResumeOrMutateRejectedJob() async throws {
@@ -311,16 +402,19 @@ private actor ContentFixture: LocalLanguageModelClient {
     var unloaded = false
     private let invalidFinal: Bool
     private let dateHint: String
+    private let calendarResponse: String?
     private let onFinal: (@Sendable () async throws -> Void)?
-    init(invalidFinal: Bool = false, dateHint: String = "next week", onFinal: (@Sendable () async throws -> Void)? = nil) {
+    init(invalidFinal: Bool = false, dateHint: String = "next week", calendarResponse: String? = nil, onFinal: (@Sendable () async throws -> Void)? = nil) {
         self.invalidFinal = invalidFinal
         self.dateHint = dateHint
+        self.calendarResponse = calendarResponse
         self.onFinal = onFinal
     }
     func generate(instruction: String, context: [String: String]) async throws -> String {
         let prompt = instruction + "\n\n" + String(decoding: try JSONEncoder().encode(context), as: UTF8.self)
         prompts.append(prompt)
         if prompt.hasPrefix("calendar-candidates") {
+            if let calendarResponse { return calendarResponse }
             return String(decoding: try JSONEncoder().encode([CalendarCandidate(title: "Review", dateHint: dateHint,
                 durationMinutes: nil, reason: "Explicit follow up", sourceQuote: "review next week")]), as: UTF8.self)
         }

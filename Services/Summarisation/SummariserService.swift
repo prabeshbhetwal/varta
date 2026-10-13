@@ -10,6 +10,9 @@ actor SummariserService {
         var candidates: [CalendarCandidate] = []
         var sections: [String] = []
         var failedFinalResponse: String?
+        var failedCalendarResponse: String?
+        var failedCalendarWindowIndex: Int?
+        var failedCalendarCandidateIndex: Int?
     }
 
     private let storageService: StorageService
@@ -83,12 +86,30 @@ actor SummariserService {
                 extraction[type] = try await run(prompt, context: ["transcript": window], prompts: prompts)
             }
             let raw = try await run(.calendarCandidates, context: ["transcript": window, "meeting_date": meetingDate], prompts: prompts)
-            let proposed = try JSONDecoder().decode([CalendarCandidate].self, from: Self.jsonData(raw))
-            for candidate in proposed {
-                try candidate.validate()
-                guard window.range(of: candidate.sourceQuote, options: [.caseInsensitive]) != nil else {
-                    throw LocalModelError.invalidOutput("Calendar candidate lacks a quote from its source transcript.")
+            let proposed: [CalendarCandidate]
+            var candidateIndex: Int?
+            do {
+                proposed = try JSONDecoder().decode([CalendarCandidate].self, from: Self.jsonData(raw))
+                for (index, candidate) in proposed.enumerated() {
+                    candidateIndex = index
+                    try candidate.validate()
+                    guard window.range(of: candidate.sourceQuote, options: [.caseInsensitive]) != nil else {
+                        throw LocalModelError.invalidOutput("Calendar candidate lacks a quote from its source transcript.")
+                    }
                 }
+            } catch {
+                if error is CancellationError { throw error }
+                checkpoint.failedCalendarResponse = raw
+                checkpoint.failedCalendarWindowIndex = checkpoint.summaries.count
+                checkpoint.failedCalendarCandidateIndex = candidateIndex
+                var checkpointWriteFailed = false
+                do { try await persist(checkpoint, jobID: jobID, windowCount: windows.count) }
+                catch { checkpointWriteFailed = true }
+                let diagnostic = Self.calendarResponseDiagnostic(error, windowIndex: checkpoint.summaries.count,
+                    candidateIndex: candidateIndex, responseBytes: raw.utf8.count, checkpointWriteFailed: checkpointWriteFailed) + "\n"
+                try? FileHandle.standardError.write(contentsOf: Data(diagnostic.utf8))
+                try Task.checkCancellation()
+                throw error
             }
             // Commit a whole window only after every response and evidence quote validates.
             checkpoint.summaries.append(summary)
@@ -239,6 +260,19 @@ actor SummariserService {
             }.joined(separator: "\n")
             return text.isEmpty ? nil : text
         }
+    }
+
+    nonisolated static func calendarResponseDiagnostic(_ error: Error, windowIndex: Int, candidateIndex: Int?,
+        responseBytes: Int, checkpointWriteFailed: Bool) -> String {
+        var field = error is DecodingError ? "json" : "candidate"
+        if case LocalModelError.invalidOutput(let message) = error {
+            switch message {
+            case "Calendar date hint lacks quoted evidence.": field = "date_hint"
+            case "Calendar candidate lacks a quote from its source transcript.": field = "source_quote"
+            default: break
+            }
+        }
+        return "Calendar response rejected: window=\(windowIndex), candidate=\(candidateIndex.map(String.init) ?? "none"), field=\(field), bytes=\(responseBytes), checkpoint_write_error=\(checkpointWriteFailed ? 1 : 0)."
     }
 
     nonisolated static func finalSummaryDecodingDiagnostic(_ error: DecodingError, data: Data) -> String {

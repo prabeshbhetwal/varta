@@ -279,6 +279,92 @@ final class StorageServiceTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testIsolatedBuildRejectsDefaultTargetsAndCaseAliases() async throws {
+        guard ProcessInfo.processInfo.environment["VARTA_TESTING"] == "1" else {
+            XCTFail("Test scheme must isolate app startup")
+            return
+        }
+        let previous = ProcessInfo.processInfo.environment["VARTA_DATA_DIRECTORY"]
+        defer {
+            if let previous { setenv("VARTA_DATA_DIRECTORY", previous, 1) }
+            else { unsetenv("VARTA_DATA_DIRECTORY") }
+        }
+        for index in 0..<8 {
+            let fixture = URL(fileURLWithPath: NSTemporaryDirectory()).resolvingSymlinksInPath()
+                .appendingPathComponent("varta-default-target-\(index)-\(UUID().uuidString)", isDirectory: true)
+            let support = fixture.appendingPathComponent("support", isDirectory: true)
+            let normal = support.appendingPathComponent("Varta", isDirectory: true)
+            var selected = fixture.appendingPathComponent("selected", isDirectory: true)
+            if index == 5 { selected = support.appendingPathComponent("vARTA", isDirectory: true) }
+            if index == 6 { selected = support.appendingPathComponent("vARTA/isolated-child", isDirectory: true) }
+            for directory in [normal, selected] {
+                try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            }
+            var target = selected.appendingPathComponent("varta.sqlite")
+            switch index {
+            case 1: target = selected.appendingPathComponent("varta.sqlite-wal")
+            case 2: target = selected.appendingPathComponent("varta.sqlite-shm")
+            case 3, 4: target = selected.appendingPathComponent("varta.files/Prompts/final-summary.txt")
+            case 7: target = selected.appendingPathComponent("varta.files/Recordings/fixture/mic.wav")
+            default: break
+            }
+            try FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("Synthetic physical default target".utf8).write(to: target)
+            let normalDatabase = normal.appendingPathComponent("varta.sqlite")
+            if index == 0 {
+                try FileManager.default.createSymbolicLink(at: normalDatabase, withDestinationURL: target)
+            } else if index < 5 || index == 7 {
+                try Data("Synthetic default database marker".utf8).write(to: normalDatabase)
+            }
+            switch index {
+            case 1, 2:
+                try FileManager.default.createSymbolicLink(at: normal.appendingPathComponent(index == 1 ? "varta.sqlite-wal" : "varta.sqlite-shm"), withDestinationURL: target)
+            case 3:
+                try FileManager.default.createSymbolicLink(at: normal.appendingPathComponent("Prompts"), withDestinationURL: target.deletingLastPathComponent())
+            case 4, 7:
+                let relative = index == 4 ? "Prompts/final-summary.txt" : "Recordings/fixture/mic.wav"
+                let alias = normal.appendingPathComponent(relative)
+                try FileManager.default.createDirectory(at: alias.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try FileManager.default.createSymbolicLink(at: alias, withDestinationURL: target)
+            default: break
+            }
+            let before = try syntheticTreeSnapshot(fixture)
+            setenv("VARTA_DATA_DIRECTORY", selected.path, 1)
+            let model = AppModel()
+
+            await model.bootstrap(fileManager: IsolationFileManager(support: support))
+
+            XCTAssertNil(model.storageService)
+            XCTAssertNil(model.settingsStore)
+            XCTAssertNil(model.recorderCoordinator)
+            XCTAssertNil(model.systemRuntimeCoordinator)
+            guard case .failed(let message) = model.launchState else {
+                XCTFail("Default target case \(index) must fail before storage")
+                continue
+            }
+            XCTAssertTrue(message.contains("VARTA_DATA_DIRECTORY"))
+            XCTAssertEqual(try syntheticTreeSnapshot(fixture), before)
+        }
+    }
+
+    private func syntheticTreeSnapshot(_ root: URL) throws -> [String: String] {
+        let entries = try XCTUnwrap(FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil))
+        var locations = [root]
+        while let location = entries.nextObject() as? URL { locations.append(location) }
+        return try Dictionary(uniqueKeysWithValues: locations.map { location in
+            let attributes = try FileManager.default.attributesOfItem(atPath: location.path)
+            var value = "\(attributes[.type] ?? "")|\(attributes[.size] ?? "")|\((attributes[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0)|\(attributes[.referenceCount] ?? "")"
+            if attributes[.type] as? FileAttributeType == .typeRegular {
+                value += "|" + (try Data(contentsOf: location)).base64EncodedString()
+            }
+            if attributes[.type] as? FileAttributeType == .typeSymbolicLink {
+                value += "|" + (try FileManager.default.destinationOfSymbolicLink(atPath: location.path))
+            }
+            return (location.path, value)
+        })
+    }
+
     private func defaultStorageMetadata() -> [[String: String]] {
         guard let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return [] }
         let database = support.appendingPathComponent("Varta/varta.sqlite").path

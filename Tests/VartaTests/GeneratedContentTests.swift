@@ -130,6 +130,60 @@ final class GeneratedContentTests: XCTestCase {
         XCTAssertTrue(unloaded)
     }
 
+    func testCalendarCaptionBoundariesPreserveEvidenceWithoutTransferringDeadlinesAndResume() async throws {
+        let storage = try await makeStorage()
+        let meeting = try await storage.createMeeting(title: "Caption boundary fixture", languageMode: .english)
+        let deadline = "Friday, 16 October, at 5 in the afternoon"
+        let enquiry = "Ravi will ask the library manager about the projector."
+        let review = "Maya will review the checklist with Ravi before the demonstration. The checklist must include keyboard navigation, visible focus indicators,"
+        let continuation = "and readable text contrast."
+        try await storage.replaceTranscriptSegments(meetingID: meeting, segments: [
+            "Ravi will send the draft agenda by \(deadline).", enquiry, review, continuation
+        ].enumerated().map { index, text in
+            NewTranscriptSegment(startSeconds: Double(index * 10), endSeconds: Double(index * 10 + 10), text: text, languageTag: "en", speakerLabel: nil)
+        })
+        let quotedReview = CalendarCandidate(title: "Review", dateHint: "Before the demonstration", durationMinutes: nil,
+            reason: "Explicit review", sourceQuote: review + " " + continuation)
+        func response(_ hint: String?) throws -> String {
+            String(decoding: try JSONEncoder().encode([quotedReview,
+                CalendarCandidate(title: "Ask manager", dateHint: hint, durationMinutes: nil, reason: "Explicit enquiry", sourceQuote: enquiry)
+            ]), as: UTF8.self)
+        }
+        let invalid = ContentFixture(calendarResponse: try response(deadline))
+        do {
+            _ = try await SummariserService(storageService: storage, memoryManager: MemoryManager(),
+                client: invalid).summariseMeeting(meetingID: meeting)
+            XCTFail("Another task's deadline must remain rejected")
+        } catch LocalModelError.invalidOutput(let message) {
+            XCTAssertEqual(message, "Calendar date hint lacks quoted evidence.")
+        }
+        let invalidPrompts = await invalid.prompts
+        XCTAssertTrue(invalidPrompts.last?.contains(quotedReview.sourceQuote) == true)
+        XCTAssertFalse(invalidPrompts.last?.contains("[20.0-30.0]") == true)
+        let failed = try await storage.jobs(statuses: [.failed], type: .summarisation)
+        let job = try XCTUnwrap(failed.first { $0.meetingID == meeting })
+        let state = try await storage.processingState(jobID: job.id, stage: "summary")
+        let checkpoint = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(try XCTUnwrap(state?.checkpointBlob).utf8)) as? [String: Any])
+        XCTAssertEqual(checkpoint["failedCalendarCandidateIndex"] as? Int, 1)
+        XCTAssertEqual((checkpoint["summaries"] as? [String])?.count, 0)
+        XCTAssertEqual((checkpoint["candidates"] as? [Any])?.count, 0)
+        let previousOutputs = try await storage.generatedOutputs(meetingID: meeting)
+        XCTAssertTrue(previousOutputs.isEmpty)
+        do {
+            _ = try await SummariserService(storageService: storage, memoryManager: MemoryManager(),
+                client: ContentFixture(invalidFinal: true, calendarResponse: try response(nil))).summariseMeeting(meetingID: meeting)
+            XCTFail("Final response must still decode strictly")
+        } catch is DecodingError { }
+        let retry = ContentFixture(calendarResponse: try response(nil))
+        let outputs = try await SummariserService(storageService: storage, memoryManager: MemoryManager(), client: retry).summariseMeeting(meetingID: meeting)
+        XCTAssertEqual(outputs.outputs.count, 8)
+        let prompts = await retry.prompts
+        XCTAssertEqual(prompts.count, 2)
+        XCTAssertTrue(prompts.first?.hasPrefix("final-summary") == true)
+        let jobs = try await storage.jobs(statuses: [.completed], type: .summarisation)
+        XCTAssertEqual(jobs.filter { $0.meetingID == meeting }.map(\.id), [job.id])
+    }
+
     func testMalformedCalendarResponseIsRetainedWithoutCompletingWindow() async throws {
         let storage = try await makeStorage()
         let meeting = try await seedTranscript(storage)

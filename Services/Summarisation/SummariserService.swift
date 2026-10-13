@@ -2,6 +2,11 @@ import Foundation
 import CryptoKit
 
 actor SummariserService {
+    private struct TranscriptWindow: Sendable {
+        let timedText: String
+        let evidence: String
+    }
+
     private struct Checkpoint: Codable, Sendable {
         let transcriptRevision: Int
         let inputFingerprint: String
@@ -73,19 +78,19 @@ actor SummariserService {
         }
     }
 
-    private func generate(windows: [String], meetingDate: String, prompts: [PromptTemplate: String], jobID: String, checkpoint initial: Checkpoint) async throws -> MeetingOutputs {
+    private func generate(windows: [TranscriptWindow], meetingDate: String, prompts: [PromptTemplate: String], jobID: String, checkpoint initial: Checkpoint) async throws -> MeetingOutputs {
         var checkpoint = initial
         let types: [(GeneratedOutputType, PromptTemplate)] = [
             (.actionItems, .actionItems), (.decisions, .decisions), (.unresolvedQuestions, .unresolvedQuestions)
         ]
         for window in windows.dropFirst(checkpoint.summaries.count) {
             try Task.checkCancellation()
-            let summary = try await run(.windowSummary, context: ["transcript": window], prompts: prompts)
+            let summary = try await run(.windowSummary, context: ["transcript": window.timedText], prompts: prompts)
             var extraction: [GeneratedOutputType: String] = [:]
             for (type, prompt) in types {
-                extraction[type] = try await run(prompt, context: ["transcript": window], prompts: prompts)
+                extraction[type] = try await run(prompt, context: ["transcript": window.timedText], prompts: prompts)
             }
-            let raw = try await run(.calendarCandidates, context: ["transcript": window, "meeting_date": meetingDate], prompts: prompts)
+            let raw = try await run(.calendarCandidates, context: ["transcript": window.evidence, "meeting_date": meetingDate], prompts: prompts)
             let proposed: [CalendarCandidate]
             var candidateIndex: Int?
             do {
@@ -93,7 +98,7 @@ actor SummariserService {
                 for (index, candidate) in proposed.enumerated() {
                     candidateIndex = index
                     try candidate.validate()
-                    guard window.range(of: candidate.sourceQuote, options: [.caseInsensitive]) != nil else {
+                    guard window.evidence.range(of: candidate.sourceQuote, options: [.caseInsensitive]) != nil else {
                         throw LocalModelError.invalidOutput("Calendar candidate lacks a quote from its source transcript.")
                     }
                 }
@@ -126,7 +131,7 @@ actor SummariserService {
             checkpoint.sections.append(try await run(.sectionSynthesis, context: ["window_summaries": text], prompts: prompts))
             try await persist(checkpoint, jobID: jobID, windowCount: windows.count)
         }
-        let finalContext = try Self.finalSummaryContext(windows: windows,
+        let finalContext = try Self.finalSummaryContext(windows: windows.map(\.timedText),
             sectionSynthesis: try await boundedSynthesis(checkpoint.sections, prompts: prompts))
         let raw = try await run(.finalSummary, context: finalContext, prompts: prompts)
         let data = try Self.jsonData(raw)
@@ -158,7 +163,7 @@ actor SummariserService {
         return MeetingOutputs(summary: summary, outputs: outputs)
     }
 
-    private func matchingCheckpoint(meetingID: String, revision: Int, fingerprint: String, windows: [String]) async throws
+    private func matchingCheckpoint(meetingID: String, revision: Int, fingerprint: String, windows: [TranscriptWindow]) async throws
         -> (jobID: String, checkpoint: Checkpoint)? {
         let jobs = try await storageService.jobs(statuses: [.paused, .failed], type: .summarisation)
         for job in jobs where job.meetingID == meetingID {
@@ -179,7 +184,7 @@ actor SummariserService {
             let evidence = windows.prefix(checkpoint.summaries.count)
             guard checkpoint.candidates.allSatisfy({ candidate in
                 (try? candidate.validate()) != nil && evidence.contains(where: {
-                    $0.range(of: candidate.sourceQuote, options: .caseInsensitive) != nil
+                    $0.evidence.range(of: candidate.sourceQuote, options: .caseInsensitive) != nil
                 })
             }) else { continue }
             return (job.id, checkpoint)
@@ -198,13 +203,13 @@ actor SummariserService {
         try await storageService.updateJobStatus(id: jobID, status: status, progress: progress, errorMessage: nil)
     }
 
-    private nonisolated static func fingerprint(windows: [String], meetingDate: String, prompts: [PromptTemplate: String]) throws -> String {
+    private nonisolated static func fingerprint(windows: [TranscriptWindow], meetingDate: String, prompts: [PromptTemplate: String]) throws -> String {
         let instructions = try PromptTemplate.allCases.map { template -> String in
             guard let instruction = prompts[template] else { throw LocalModelError.missingAsset("Prompt: \(template.filename)") }
             return instruction
         }
-        // Bind cached stages to message roles, original-evidence context and date validation.
-        let data = try JSONEncoder().encode(["source-evidence-v2", meetingDate] + windows + instructions)
+        // Bind cached stages to timed context and canonical evidence within each window.
+        let data = try JSONEncoder().encode(["source-evidence-v3", meetingDate] + windows.flatMap { [$0.timedText, $0.evidence] } + instructions)
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
@@ -244,7 +249,7 @@ actor SummariserService {
         return fallback
     }
 
-    private nonisolated static func windows(segments: [TranscriptSegment], glossary: [GlossaryTerm]) throws -> [String] {
+    private nonisolated static func windows(segments: [TranscriptSegment], glossary: [GlossaryTerm]) throws -> [TranscriptWindow] {
         guard segments.allSatisfy({ $0.startSeconds.isFinite && $0.endSeconds.isFinite && $0.startSeconds >= 0 && $0.endSeconds >= $0.startSeconds }) else {
             throw StorageService.StorageError.invalidTranscriptTiming
         }
@@ -254,11 +259,15 @@ actor SummariserService {
         return (0..<count).compactMap { index in
             let start = max(0, Double(index * 600) - 30)
             let end = Double((index + 1) * 600)
-            let text: String = segments.filter { $0.endSeconds >= start && $0.startSeconds < end }.map { segment -> String in
-                let corrected = applyGlossary(text: segment.effectiveText, languageHint: LanguageMode(rawValue: segment.languageTag ?? ""), terms: glossary)
-                return "[\(segment.startSeconds)-\(segment.endSeconds)] \(corrected)"
+            let selected = segments.filter { $0.endSeconds >= start && $0.startSeconds < end }
+            guard !selected.isEmpty else { return nil }
+            let corrected = selected.map { segment in
+                applyGlossary(text: segment.effectiveText, languageHint: LanguageMode(rawValue: segment.languageTag ?? ""), terms: glossary)
+            }
+            let timed = zip(selected, corrected).map { segment, text in
+                "[\(segment.startSeconds)-\(segment.endSeconds)] \(text)"
             }.joined(separator: "\n")
-            return text.isEmpty ? nil : text
+            return TranscriptWindow(timedText: timed, evidence: corrected.joined(separator: " "))
         }
     }
 

@@ -126,6 +126,13 @@ struct CalendarCandidate: Codable, Hashable, Identifiable, Sendable {
               durationMinutes.map({ $0.isFinite && $0 > 0 && $0 <= 1_440 }) ?? true else {
             throw LocalModelError.invalidOutput("Invalid calendar candidate title, quote or duration.")
         }
+        if let dateHint {
+            guard !dateHint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  dateHint.utf8.count <= 500,
+                  sourceQuote.range(of: dateHint, options: [.caseInsensitive]) != nil else {
+                throw LocalModelError.invalidOutput("Calendar date hint lacks quoted evidence.")
+            }
+        }
     }
 }
 

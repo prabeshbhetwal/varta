@@ -37,7 +37,7 @@ actor RecorderCoordinator {
         case wake
     }
 
-    private enum AudioSource: String, Sendable {
+    enum AudioSource: String, Sendable {
         case microphone
         case system
     }
@@ -547,7 +547,7 @@ actor RecorderCoordinator {
         activeSession?.currentSegmentStartedAt = nil
     }
 
-    private func finalise(_ writers: [AudioSource: RecordingWriter], segmentIndex: Int) async throws {
+    func finalise(_ writers: [AudioSource: RecordingWriter], segmentIndex: Int) async throws {
         guard let session = activeSession else { return }
         var finished: [(AudioSource, URL, RecordingWriter.FinishedSegment)] = []
         var failures: [String] = []
@@ -577,7 +577,8 @@ actor RecorderCoordinator {
                     format: "m4a", durationSeconds: result.durationSeconds, source: source.rawValue,
                     segmentIndex: segmentIndex, timelineOffsetSeconds: offset)
                 activeSession?.segmentRelativePaths.append(relativePath)
-                activeSession?.totalRecordedSeconds = max(activeSession?.totalRecordedSeconds ?? 0, offset + result.durationSeconds)
+                let totalRecordedSeconds = max(activeSession?.totalRecordedSeconds ?? 0, offset + result.durationSeconds)
+                activeSession?.totalRecordedSeconds = totalRecordedSeconds
             } catch { failures.append("\(source.rawValue) persistence: \(error.localizedDescription)") }
         }
         if !failures.isEmpty {

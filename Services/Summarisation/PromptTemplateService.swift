@@ -81,16 +81,16 @@ enum PromptTemplateService {
         return instruction + "\n\n" + String(decoding: data, as: UTF8.self)
     }
 
-    private static func instruction(for template: PromptTemplate, appSupportDirectoryURL: URL) throws -> String {
+    static func instruction(for template: PromptTemplate, appSupportDirectoryURL: URL) throws -> String {
         let instruction = try loadPrompt(for: template, appSupportDirectoryURL: appSupportDirectoryURL)
         var contract = ""
-        if template == .finalSummary || template == .calendarCandidates {
+        if [.windowSummary, .sectionSynthesis, .finalSummary, .actionItems, .decisions, .followUpEmail, .calendarCandidates].contains(template) {
             let bundled = bundledPromptContent(for: template, bundle: .main)
             guard !bundled.isEmpty else {
-                throw LocalModelError.missingAsset("Structured response contract for \(template.filename)")
+                throw LocalModelError.missingAsset("Required response contract for \(template.filename)")
             }
-            // Keep custom/older prompt files; the bundled schema remains an invariant.
-            contract = "\n\n" + bundled
+            // Keep custom/older files; bundled response and evidence contracts remain invariant.
+            contract = "\n\nMandatory response and evidence rules (override earlier conflicting instructions):\n" + bundled
         }
         return instruction + contract
     }

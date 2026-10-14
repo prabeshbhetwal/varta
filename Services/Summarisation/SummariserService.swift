@@ -2,6 +2,11 @@ import Foundation
 import CryptoKit
 
 actor SummariserService {
+    private struct TranscriptWindow: Sendable {
+        let timedText: String
+        let evidence: String
+    }
+
     private struct Checkpoint: Codable, Sendable {
         let transcriptRevision: Int
         let inputFingerprint: String
@@ -9,6 +14,10 @@ actor SummariserService {
         var extracted: [GeneratedOutputType: [String]] = [:]
         var candidates: [CalendarCandidate] = []
         var sections: [String] = []
+        var failedFinalResponse: String?
+        var failedCalendarResponse: String?
+        var failedCalendarWindowIndex: Int?
+        var failedCalendarCandidateIndex: Int?
     }
 
     private let storageService: StorageService
@@ -69,25 +78,43 @@ actor SummariserService {
         }
     }
 
-    private func generate(windows: [String], meetingDate: String, prompts: [PromptTemplate: String], jobID: String, checkpoint initial: Checkpoint) async throws -> MeetingOutputs {
+    private func generate(windows: [TranscriptWindow], meetingDate: String, prompts: [PromptTemplate: String], jobID: String, checkpoint initial: Checkpoint) async throws -> MeetingOutputs {
         var checkpoint = initial
         let types: [(GeneratedOutputType, PromptTemplate)] = [
             (.actionItems, .actionItems), (.decisions, .decisions), (.unresolvedQuestions, .unresolvedQuestions)
         ]
         for window in windows.dropFirst(checkpoint.summaries.count) {
             try Task.checkCancellation()
-            let summary = try await run(.windowSummary, context: ["transcript": window], prompts: prompts)
+            let summary = try await run(.windowSummary, context: ["transcript": window.timedText], prompts: prompts)
             var extraction: [GeneratedOutputType: String] = [:]
             for (type, prompt) in types {
-                extraction[type] = try await run(prompt, context: ["transcript": window], prompts: prompts)
+                extraction[type] = try await run(prompt, context: ["transcript": window.timedText], prompts: prompts)
             }
-            let raw = try await run(.calendarCandidates, context: ["transcript": window, "meeting_date": meetingDate], prompts: prompts)
-            let proposed = try JSONDecoder().decode([CalendarCandidate].self, from: Self.jsonData(raw))
-            for candidate in proposed {
-                try candidate.validate()
-                guard window.range(of: candidate.sourceQuote, options: [.caseInsensitive]) != nil else {
-                    throw LocalModelError.invalidOutput("Calendar candidate lacks a quote from its source transcript.")
+            let raw = try await run(.calendarCandidates, context: ["transcript": window.evidence, "meeting_date": meetingDate], prompts: prompts)
+            let proposed: [CalendarCandidate]
+            var candidateIndex: Int?
+            do {
+                proposed = try JSONDecoder().decode([CalendarCandidate].self, from: Self.jsonData(raw))
+                for (index, candidate) in proposed.enumerated() {
+                    candidateIndex = index
+                    try candidate.validate()
+                    guard window.evidence.range(of: candidate.sourceQuote, options: [.caseInsensitive]) != nil else {
+                        throw LocalModelError.invalidOutput("Calendar candidate lacks a quote from its source transcript.")
+                    }
                 }
+            } catch {
+                if error is CancellationError { throw error }
+                checkpoint.failedCalendarResponse = raw
+                checkpoint.failedCalendarWindowIndex = checkpoint.summaries.count
+                checkpoint.failedCalendarCandidateIndex = candidateIndex
+                var checkpointWriteFailed = false
+                do { try await persist(checkpoint, jobID: jobID, windowCount: windows.count) }
+                catch { checkpointWriteFailed = true }
+                let diagnostic = Self.calendarResponseDiagnostic(error, windowIndex: checkpoint.summaries.count,
+                    candidateIndex: candidateIndex, responseBytes: raw.utf8.count, checkpointWriteFailed: checkpointWriteFailed) + "\n"
+                try? FileHandle.standardError.write(contentsOf: Data(diagnostic.utf8))
+                try Task.checkCancellation()
+                throw error
             }
             // Commit a whole window only after every response and evidence quote validates.
             checkpoint.summaries.append(summary)
@@ -104,16 +131,28 @@ actor SummariserService {
             checkpoint.sections.append(try await run(.sectionSynthesis, context: ["window_summaries": text], prompts: prompts))
             try await persist(checkpoint, jobID: jobID, windowCount: windows.count)
         }
-        let raw = try await run(.finalSummary, context: ["section_summaries": try await boundedSynthesis(checkpoint.sections, prompts: prompts)], prompts: prompts)
-        let summary = try JSONDecoder().decode(SummaryContent.self, from: Self.jsonData(raw))
+        let finalContext = try Self.finalSummaryContext(windows: windows.map(\.timedText),
+            sectionSynthesis: try await boundedSynthesis(checkpoint.sections, prompts: prompts))
+        let raw = try await run(.finalSummary, context: finalContext, prompts: prompts)
+        let data = try Self.jsonData(raw)
+        let summary: SummaryContent
+        do {
+            summary = try JSONDecoder().decode(SummaryContent.self, from: data)
+        } catch let error as DecodingError {
+            // Keep failed response privately in the bounded checkpoint; log shape only.
+            checkpoint.failedFinalResponse = raw
+            try await persist(checkpoint, jobID: jobID, windowCount: windows.count)
+            let diagnostic = Self.finalSummaryDecodingDiagnostic(error, data: data) + "\n"
+            try? FileHandle.standardError.write(contentsOf: Data(diagnostic.utf8))
+            throw error
+        }
         guard [summary.concise, summary.detailed, summary.bullets].allSatisfy({ !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) else {
             throw LocalModelError.invalidOutput("Final summary requires concise, detailed and bullet text.")
         }
         var outputs = types.map { type, _ in
             GeneratedOutput(type: type, language: .english, content: (checkpoint.extracted[type] ?? []).joined(separator: "\n\n"))
         }
-        let emailContext = try await boundedSynthesis(outputs.map(\.content), prompts: prompts)
-        outputs.append(GeneratedOutput(type: .followUpEmail, language: .english, content: try await run(.followUpEmail, context: ["summary": summary.concise, "extracted_outputs": emailContext], prompts: prompts)))
+        outputs.append(GeneratedOutput(type: .followUpEmail, language: .english, content: try await run(.followUpEmail, context: finalContext, prompts: prompts)))
         outputs.append(GeneratedOutput(type: .calendarCandidates, language: .english, content: String(decoding: try JSONEncoder().encode(checkpoint.candidates), as: UTF8.self)))
         outputs += [
             GeneratedOutput(type: .summaryConcise, language: .english, content: summary.concise),
@@ -123,7 +162,7 @@ actor SummariserService {
         return MeetingOutputs(summary: summary, outputs: outputs)
     }
 
-    private func matchingCheckpoint(meetingID: String, revision: Int, fingerprint: String, windows: [String]) async throws
+    private func matchingCheckpoint(meetingID: String, revision: Int, fingerprint: String, windows: [TranscriptWindow]) async throws
         -> (jobID: String, checkpoint: Checkpoint)? {
         let jobs = try await storageService.jobs(statuses: [.paused, .failed], type: .summarisation)
         for job in jobs where job.meetingID == meetingID {
@@ -144,7 +183,7 @@ actor SummariserService {
             let evidence = windows.prefix(checkpoint.summaries.count)
             guard checkpoint.candidates.allSatisfy({ candidate in
                 (try? candidate.validate()) != nil && evidence.contains(where: {
-                    $0.range(of: candidate.sourceQuote, options: .caseInsensitive) != nil
+                    $0.evidence.range(of: candidate.sourceQuote, options: .caseInsensitive) != nil
                 })
             }) else { continue }
             return (job.id, checkpoint)
@@ -163,12 +202,13 @@ actor SummariserService {
         try await storageService.updateJobStatus(id: jobID, status: status, progress: progress, errorMessage: nil)
     }
 
-    private nonisolated static func fingerprint(windows: [String], meetingDate: String, prompts: [PromptTemplate: String]) throws -> String {
+    private nonisolated static func fingerprint(windows: [TranscriptWindow], meetingDate: String, prompts: [PromptTemplate: String]) throws -> String {
         let instructions = try PromptTemplate.allCases.map { template -> String in
             guard let instruction = prompts[template] else { throw LocalModelError.missingAsset("Prompt: \(template.filename)") }
             return instruction
         }
-        let data = try JSONEncoder().encode([meetingDate] + windows + instructions)
+        // Bind cached stages to timed context and canonical evidence within each window.
+        let data = try JSONEncoder().encode(["source-evidence-v3", meetingDate] + windows.flatMap { [$0.timedText, $0.evidence] } + instructions)
         return SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
@@ -176,7 +216,7 @@ actor SummariserService {
         var current = values
         for _ in 0..<5 {
             let combined = current.joined(separator: "\n\n")
-            if combined.utf8.count <= 60_000 { return combined }
+            if try JSONEncoder().encode(["section_summaries": combined]).count <= 60_000 { return combined }
             var reduced: [String] = []
             for index in stride(from: 0, to: current.count, by: 3) {
                 reduced.append(try await run(.sectionSynthesis, context: [
@@ -190,13 +230,25 @@ actor SummariserService {
 
     private func run(_ template: PromptTemplate, context: [String: String], prompts: [PromptTemplate: String]) async throws -> String {
         try Task.checkCancellation()
-        let response = try await client.generate(prompt: PromptTemplateService.render(template, context: context, snapshot: prompts))
+        guard let instruction = prompts[template] else { throw LocalModelError.missingAsset("Prompt: \(template.filename)") }
+        let response = try await client.generate(instruction: instruction, context: context)
         let text = response.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { throw LocalModelError.invalidOutput("Empty response for \(template.rawValue).") }
         return text
     }
 
-    private nonisolated static func windows(segments: [TranscriptSegment], glossary: [GlossaryTerm]) throws -> [String] {
+    nonisolated static func finalSummaryContext(windows: [String], sectionSynthesis: String) throws -> [String: String] {
+        let original = ["transcript": windows.joined(separator: "\n\n")]
+        if try JSONEncoder().encode(original).count <= 60_000 { return original }
+        // shortcut: original context limited to 60 KB; verify an evidence ledger before long-meeting fidelity acceptance.
+        let fallback = ["section_summaries": sectionSynthesis]
+        guard try JSONEncoder().encode(fallback).count <= 60_000 else {
+            throw LocalModelError.invalidOutput("Final summary evidence exceeds the bounded synthesis context.")
+        }
+        return fallback
+    }
+
+    private nonisolated static func windows(segments: [TranscriptSegment], glossary: [GlossaryTerm]) throws -> [TranscriptWindow] {
         guard segments.allSatisfy({ $0.startSeconds.isFinite && $0.endSeconds.isFinite && $0.startSeconds >= 0 && $0.endSeconds >= $0.startSeconds }) else {
             throw StorageService.StorageError.invalidTranscriptTiming
         }
@@ -206,12 +258,64 @@ actor SummariserService {
         return (0..<count).compactMap { index in
             let start = max(0, Double(index * 600) - 30)
             let end = Double((index + 1) * 600)
-            let text: String = segments.filter { $0.endSeconds >= start && $0.startSeconds < end }.map { segment -> String in
-                let corrected = applyGlossary(text: segment.effectiveText, languageHint: LanguageMode(rawValue: segment.languageTag ?? ""), terms: glossary)
-                return "[\(segment.startSeconds)-\(segment.endSeconds)] \(corrected)"
+            let selected = segments.filter { $0.endSeconds >= start && $0.startSeconds < end }
+            guard !selected.isEmpty else { return nil }
+            let corrected = selected.map { segment in
+                applyGlossary(text: segment.effectiveText, languageHint: LanguageMode(rawValue: segment.languageTag ?? ""), terms: glossary)
+            }
+            let timed = zip(selected, corrected).map { segment, text in
+                "[\(segment.startSeconds)-\(segment.endSeconds)] \(text)"
             }.joined(separator: "\n")
-            return text.isEmpty ? nil : text
+            return TranscriptWindow(timedText: timed, evidence: corrected.joined(separator: " "))
         }
+    }
+
+    nonisolated static func calendarResponseDiagnostic(_ error: Error, windowIndex: Int, candidateIndex: Int?,
+        responseBytes: Int, checkpointWriteFailed: Bool) -> String {
+        var field = error is DecodingError ? "json" : "candidate"
+        if case LocalModelError.invalidOutput(let message) = error {
+            switch message {
+            case "Calendar date hint lacks quoted evidence.": field = "date_hint"
+            case "Calendar candidate lacks a quote from its source transcript.": field = "source_quote"
+            default: break
+            }
+        }
+        return "Calendar response rejected: window=\(windowIndex), candidate=\(candidateIndex.map(String.init) ?? "none"), field=\(field), bytes=\(responseBytes), checkpoint_write_error=\(checkpointWriteFailed ? 1 : 0)."
+    }
+
+    nonisolated static func finalSummaryDecodingDiagnostic(_ error: DecodingError, data: Data) -> String {
+        let kind: String
+        let expected: String
+        let path: [any CodingKey]
+        switch error {
+        case .typeMismatch(let type, let context):
+            kind = "typeMismatch"; expected = String(describing: type); path = context.codingPath
+        case .valueNotFound(let type, let context):
+            kind = "valueNotFound"; expected = String(describing: type); path = context.codingPath
+        case .keyNotFound(let key, let context):
+            kind = "keyNotFound"; expected = "required field"; path = context.codingPath + [key]
+        case .dataCorrupted(let context):
+            kind = "dataCorrupted"; expected = "valid JSON"; path = context.codingPath
+        @unknown default:
+            kind = "unknown"; expected = "summary object"; path = []
+        }
+        let fields = ["concise", "detailed", "bullets"]
+        let safePath = path.prefix(8).map { key in
+            key.intValue.map(String.init) ?? (fields.contains(key.stringValue) ? key.stringValue : "<unknown>")
+        }.joined(separator: ".")
+        func shape(_ value: Any?) -> String {
+            guard let value else { return "missing" }
+            if value is NSNull { return "null" }
+            if value is String { return "string" }
+            if value is [Any] { return "array" }
+            if value is [String: Any] { return "object" }
+            if value is NSNumber { return "number/bool" }
+            return "unknown"
+        }
+        let root = try? JSONSerialization.jsonObject(with: data, options: .fragmentsAllowed)
+        let object = root as? [String: Any]
+        let types = fields.map { "\($0)=\(shape(object?[$0]))" }.joined(separator: ", ")
+        return "Final summary rejected: \(kind), expected \(expected.prefix(64)), path \(safePath.isEmpty ? "root" : safePath), bytes \(data.count), root \(root == nil ? "invalid JSON" : shape(root)); \(types)."
     }
 
     nonisolated static func jsonData(_ text: String) throws -> Data {

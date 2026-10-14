@@ -138,7 +138,7 @@ struct LocalModelConfiguration: Sendable {
 }
 
 protocol LocalLanguageModelClient: Sendable {
-    func generate(prompt: String) async throws -> String
+    func generate(instruction: String, context: [String: String]) async throws -> String
     func unload() async
 }
 
@@ -152,10 +152,18 @@ actor MLXLanguageModelClient: LocalLanguageModelClient {
         self.configuration = configuration
     }
 
-    func generate(prompt: String) async throws -> String {
-        guard !prompt.isEmpty, prompt.utf8.count <= 120_000 else {
+    nonisolated static func messages(instruction: String, context: [String: String]) throws -> [[String: String]] {
+        let data = try JSONEncoder().encode(context)
+        guard !instruction.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              instruction.utf8.count + data.count <= 120_000 else {
             throw LocalModelError.invalidOutput("Prompt is empty or exceeds the bounded context window.")
         }
+        return [["role": "system", "content": instruction],
+                ["role": "user", "content": String(decoding: data, as: UTF8.self)]]
+    }
+
+    func generate(instruction: String, context: [String: String]) async throws -> String {
+        let messages = try Self.messages(instruction: instruction, context: context)
         try Task.checkCancellation()
         let directory = try configuration.languageModelDirectory()
         #if canImport(MLXLLM) && canImport(MLXLMCommon) && canImport(MLX)
@@ -166,9 +174,9 @@ actor MLXLanguageModelClient: LocalLanguageModelClient {
             ))
         }
         guard let container else { throw LocalModelError.inferenceFailed("Llama model did not load.") }
-        let output = try await container.perform(values: prompt) { context, prompt in
+        let output = try await container.perform(values: messages) { context, messages in
             try Task.checkCancellation()
-            let input = try await context.processor.prepare(input: UserInput(prompt: prompt))
+            let input = try await context.processor.prepare(input: UserInput(messages: messages))
             var reachedLimit = false
             let result = try MLXLMCommon.generate(input: input, parameters: GenerateParameters(temperature: 0), context: context) { tokens in
                 if tokens.count >= 2_048 { reachedLimit = true }

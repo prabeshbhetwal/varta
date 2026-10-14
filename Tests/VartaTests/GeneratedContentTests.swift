@@ -299,9 +299,11 @@ final class GeneratedContentTests: XCTestCase {
         let root = await storage.appSupportDirectory()
         let previousFinal = "Keep my summary wording. Return JSON with string keys concise, detailed and bullets."
         let previousDecisions = "Keep my decisions wording. Include supporting rationale when present."
+        let previousEmail = "Keep my email wording. Open with 'As discussed during our meeting' and write as a meeting participant."
         let previous = Dictionary(uniqueKeysWithValues: PromptTemplate.allCases.map { template in
             (template, template == .finalSummary ? previousFinal
-                : template == .decisions ? previousDecisions : "Keep my \(template.rawValue) wording.")
+                : template == .decisions ? previousDecisions
+                : template == .followUpEmail ? previousEmail : "Keep my \(template.rawValue) wording.")
         })
         for (template, instruction) in previous {
             try instruction.write(to: root.appendingPathComponent("Prompts/\(template.filename)"), atomically: true, encoding: .utf8)
